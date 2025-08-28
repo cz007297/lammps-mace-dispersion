@@ -438,7 +438,9 @@ PairDispersionD3Kokkos<DeviceType>::~PairDispersionD3Kokkos()
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::allocateKK()
 {
-    PairDispersionD3::allocate();
+    // do not recall allocate because it is called when calling 
+    // base class PairDispersionD3::coeff() in our coeff
+    //PairDispersionD3::allocate();
 
     const int ntypes = atom->ntypes;
     const int nmax_atoms = atom->nmax;
@@ -468,38 +470,15 @@ void PairDispersionD3Kokkos<DeviceType>::settings(int narg, char **arg)
   k_cn_thr = this->cn_thr;
   //Kokkos::DualView<params_d3**, Kokkos::LayoutRight, DeviceType> k_params;
 }
-/*
+
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
 {
   // Call base class 
   PairDispersionD3::coeff(narg, arg);
   allocateKK();
- 
-  //atomKK = static_cast<AtomKokkos*>(atom);
-  //atomKK->sync<LMPHostType>(TYPE_MASK);
-
-
-  for (int i = 0; i < std::min(atom->nlocal, 10); i++) 
-  {
-      printf("DEBUG type[%d] = %d\n", i, atom->type[i]);
-  }
-  k_type.sync_host();
- 
-  for (int i = 0; i < std::min(atom->nlocal, 10); i++) 
-  {
-      printf("DEBUG type[%d] = %d\n", i, atom->type[i]);
-  }
-  for (int idx = 0; idx < atom->nlocal; idx++) 
-  {
-    printf("nlocal=%d, idx=%d, type=%d, ntypes=%d\n", atom->nlocal, idx, atom->type[idx], atom->ntypes);
-    if (atom->type[idx] < 1 || atom->type[idx] > atom->ntypes) 
-    {
-      error->all(FLERR, "Invalid atom type %d at local index %d (ntypes=%d)", atom->type[idx], idx, atom->ntypes);
-    }
-  }
 }
-*/
+
 template<class DeviceType>
 double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j) {
   double cut = PairDispersionD3::init_one(i, j);
@@ -511,17 +490,7 @@ double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j) {
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::init_style() {
   PairDispersionD3::init_style();
-  sync_coeffs_to_device();
  
-  for (int i = 0; i < atom->nlocal; i++)
-  {
-    const int t = k_type.h_view(i);
-    if (t < 1 || t > atom->ntypes)
-    {
-      error->all(FLERR, "Invalid atom type %d at local index %d (ntypes=%d)", t, i, atom->ntypes);
-    }
-  }
-
   auto request = neighbor->find_request(this);
   request->set_kokkos_host(std::is_same_v<DeviceType,LMPHostType> &&
                          !std::is_same_v<DeviceType,LMPDeviceType>);
@@ -539,7 +508,7 @@ void PairDispersionD3Kokkos<DeviceType>::sync_coeffs_to_device()
     error->all(FLERR,"dispersion/d3/kk: coeff() not called before init_style (arrays unallocated)");
   }
 
-  allocateKK();
+  //allocateKK();
   // Allocate params + 1D r2r4
   k_params = Kokkos::DualView<params_d3**, Kokkos::LayoutRight, DeviceType>("d3_params", ntypes+1, ntypes+1);
   k_r2r4   = Kokkos::DualView<F_FLOAT*, DeviceType>("r2r4", ntypes+1); 
@@ -703,6 +672,9 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numberKK() {
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
 {
+
+  
+  sync_coeffs_to_device();
   // init energy/virial flags
   ev_init(eflag, vflag);
 
@@ -721,6 +693,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
   auto  d_ilist_v   = k_list->d_ilist;
   auto  d_numneigh  = k_list->d_numneigh;
 
+ 
   // device views
   CHECK_DUALVIEW_DEVICE_ALLOC(k_x, "k_x");
   auto d_x          = k_x.template view<DeviceType>();
@@ -748,7 +721,14 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
   CHECK_DUALVIEW_DEVICE_ALLOC(k_c6ab, "k_c6ab");
   auto d_c6ab_v  = k_c6ab.template view<DeviceType>();
 
-  
+  for (int i = 0; i < atom->nlocal; i++)
+  {
+    const int t = k_type.h_view(i);
+    if (t < 1 || t > atom->ntypes)
+    {
+      error->all(FLERR, "Invalid atom type %d at local index %d (ntypes=%d)", t, i, atom->ntypes);
+    }
+  }
   // constants used on device
   const F_FLOAT autoang_loc  = static_cast<F_FLOAT>(autoang);
   const F_FLOAT d_cn_thr_val = static_cast<F_FLOAT>(cn_thr);  // squared distance threshold

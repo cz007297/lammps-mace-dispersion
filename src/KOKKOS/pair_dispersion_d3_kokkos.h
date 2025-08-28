@@ -471,7 +471,7 @@ class PairDispersionD3Kokkos : public PairDispersionD3
     void allocateKK(); 
     double init_one(int, int) override;
     void init_style() override; 
-    //void coeff(int narg, char **arg) override;  
+    void coeff(int narg, char **arg) override;  
     void compute(int eflag, int vflag) override; 
     void settings(int narg, char **arg) override; 
     void calc_coordination_numberKK(); 
