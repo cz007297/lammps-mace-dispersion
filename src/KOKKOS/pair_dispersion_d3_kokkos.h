@@ -10,6 +10,7 @@ PairStyle(dispersion/d3/host, PairDispersionD3Kokkos<LMPHostType>);
 
 #include "pair_dispersion_d3.h"
 #include "kokkos_type.h"
+#include "kokkos_base.h"
 #include "pair_kokkos.h"
 #include "atom_kokkos.h"
 #include "atom_masks.h"
@@ -481,14 +482,14 @@ class PairDispersionD3Kokkos : public PairDispersionD3
     int pack_reverse_comm(int, int, double*) override;
     void unpack_reverse_comm(int, int*, double*) override;
                               
-    int    pack_forward_comm(int n, DAT::tdual_int_1d k_list,
+    int    pack_forward_comm_kokkos(int n, DAT::tdual_int_1d k_list,
                                     DAT::tdual_xfloat_1d &k_buf,
                                     int /*pbc_flag*/, int /*pbc*/);
-    void unpack_forward_comm(int n, int first, 
+    void unpack_forward_comm_kokkos(int n, int first, 
                                     DAT::tdual_xfloat_1d &k_buf);
-    int    pack_reverse_comm(int n, int first, 
+    int    pack_reverse_comm_kokkos(int n, int first, 
                                     DAT::tdual_xfloat_1d &k_buf);
-    void unpack_reverse_comm(int n, DAT::tdual_int_1d k_list,
+    void unpack_reverse_comm_kokkos(int n, DAT::tdual_int_1d k_list,
                                     DAT::tdual_xfloat_1d &k_buf);
  
     //double *get_dC6(int, int, double, double) override;

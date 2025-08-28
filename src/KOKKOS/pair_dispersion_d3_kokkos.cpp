@@ -11,6 +11,8 @@
 #include "update.h"
 #include "neigh_list_kokkos.h"
 #include "neigh_request.h" 
+#include "pair_kokkos.h"
+#include "kokkos_base.h"
 #include <algorithm>
 #include <stdexcept>
 #include <unordered_map>
@@ -769,15 +771,106 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
   if (vflag_fdotr) virial_fdotr_compute();
 }
 
+template<class DeviceType>
+int PairDispersionD3Kokkos<DeviceType>::pack_forward_comm_kokkos(
+  int n, DAT::tdual_int_1d k_list, DAT::tdual_xfloat_1d &k_buf,
+  int /*pbc_flag*/, int /*pbc*/)
+{
+  auto d_list = k_list.view_device();
+  auto d_buf  = k_buf.view_device();
+  auto d_cn   = k_cn.view_device();
+  auto d_dc6  = k_dc6.view_device();
+  const int commStage = communicationStage;
 
+  Kokkos::parallel_for(
+    "pack_fwd",
+    Kokkos::RangePolicy<typename DeviceType::execution_space>(0, n),
+    KOKKOS_LAMBDA(const int i) {
+      const int idx = d_list(i);
+      d_buf(i) = (commStage == 1) ? d_cn(idx) : d_dc6(idx);
+    });
+
+  k_buf.template modify<DeviceType>();
+  k_buf.template sync<LMPHostType>();
+  Kokkos::fence();
+  return n;
+}
+
+template<class DeviceType>
+void PairDispersionD3Kokkos<DeviceType>::unpack_forward_comm_kokkos(
+  int n, int first, DAT::tdual_xfloat_1d &k_buf)
+{
+  auto d_buf = k_buf.view_device();
+  auto d_cn  = k_cn.view_device();
+  auto d_dc6 = k_dc6.view_device();
+  const int commStage = communicationStage;
+
+  Kokkos::parallel_for(
+    "unpack_fwd",
+    Kokkos::RangePolicy<typename DeviceType::execution_space>(0, n),
+    KOKKOS_LAMBDA(const int i) {
+      const int idx = first + i;
+      const auto v  = d_buf(i);
+      if (commStage == 1) d_cn(idx)  = v;
+      else                d_dc6(idx) = v;
+    });
+}
+
+template<class DeviceType>
+int PairDispersionD3Kokkos<DeviceType>::pack_reverse_comm_kokkos(
+  int n, int first, DAT::tdual_xfloat_1d &k_buf)
+{
+  auto d_buf = k_buf.view_device();
+  auto d_cn  = k_cn.view_device();
+  auto d_dc6 = k_dc6.view_device();
+  const int commStage = communicationStage;
+
+  Kokkos::parallel_for(
+    "pack_rev",
+    Kokkos::RangePolicy<typename DeviceType::execution_space>(0, n),
+    KOKKOS_LAMBDA(const int i) {
+      const int idx = first + i;
+      d_buf(i) = (commStage == 1) ? d_cn(idx) : d_dc6(idx);
+    });
+
+  k_buf.template modify<DeviceType>();
+  k_buf.template sync<LMPHostType>();
+  Kokkos::fence();
+  return n;
+}
+
+template<class DeviceType>
+void PairDispersionD3Kokkos<DeviceType>::unpack_reverse_comm_kokkos(
+  int n, DAT::tdual_int_1d k_list, DAT::tdual_xfloat_1d &k_buf)
+{
+  auto d_list = k_list.view_device();
+  auto d_buf  = k_buf.view_device();
+  auto d_cn   = k_cn.view_device();
+  auto d_dc6  = k_dc6.view_device();
+  const int commStage = communicationStage;
+
+  Kokkos::parallel_for(
+    "unpack_rev",
+    Kokkos::RangePolicy<typename DeviceType::execution_space>(0, n),
+    KOKKOS_LAMBDA(const int i) {
+      const int idx = d_list(i);
+      const auto v  = d_buf(i);
+      if (commStage == 1) Kokkos::atomic_add(&d_cn(idx),  v);
+      else                Kokkos::atomic_add(&d_dc6(idx), v);
+    });
+}
+
+
+
+/* 
 // pack_forward_comm
 template<class DeviceType>
 int PairDispersionD3Kokkos<DeviceType>::pack_forward_comm(
     int n,
     DAT::tdual_int_1d k_list,
     DAT::tdual_xfloat_1d &k_buf,
-    int /*pbc_flag*/,
-    int /*pbc*/
+    int /\*pbc_flag*\/,
+    int \/*pbc*\/
 ) {
   auto d_list = k_list.view_device();
   auto d_buf  = k_buf.view_device();
@@ -878,6 +971,8 @@ void PairDispersionD3Kokkos<DeviceType>::unpack_reverse_comm(
       });
 }
 
+*/
+// base class overrides 
 
 template<class DeviceType>
 int PairDispersionD3Kokkos<DeviceType>::pack_forward_comm(
