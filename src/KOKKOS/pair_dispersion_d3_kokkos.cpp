@@ -167,32 +167,28 @@ inline void init_dualview_from_host(DualViewType &dv, const FillerFunc &filler)
 
 template<class DeviceType>
 struct PairDispD3Kernel_dEdIJ {
+  using AT = ArrayTypes<DeviceType>;
   using exec_space      = typename DeviceType::execution_space;
+  using View2D_neigh    = typename AT::t_neighbors_2d;
   using View2D_F        = Kokkos::View<F_FLOAT**, Kokkos::LayoutRight, DeviceType>;
   using View1D_F        = Kokkos::View<F_FLOAT*, DeviceType>;
   using View1D_int      = Kokkos::View<int*, DeviceType>;
   using View2D_params   = Kokkos::View<params_d3**, Kokkos::LayoutRight, DeviceType>;
   using View5D_c6ab     = Kokkos::View<double*****, Kokkos::LayoutRight, DeviceType>;
-
   // views
   View2D_F      d_x;
   View2D_F      d_f;
   View1D_F      d_cn_v;
   View1D_F      d_dc6_v;
   View1D_int    d_type;
-  View1D_int      d_special_lj;
+  View1D_int    d_special_lj;
   View1D_int    d_mxci;
   View5D_c6ab   d_c6ab;
   View2D_params d_params;
   View1D_F      d_r2r4v;
   View1D_int    d_ilist_v;
   View1D_int    d_numneigh;
-
-  // neighbor list access
-  NeighListKokkos<DeviceType>* k_list;
-
-  // owner (for ev_tally on device)
-  PairDispersionD3Kokkos<DeviceType>* self;
+  View2D_neigh  d_neighbors;
 
   // scalars
   bool    l_eflag;
@@ -213,8 +209,7 @@ struct PairDispD3Kernel_dEdIJ {
     View1D_F d_r2r4v_,
     View1D_int d_ilist_v_,
     View1D_int d_numneigh_,
-    NeighListKokkos<DeviceType>* k_list_,
-    PairDispersionD3Kokkos<DeviceType>* self_,
+    View2D_neigh d_neighbors_,
     bool l_eflag_,
     bool l_newton_pair_,
     int  l_nlocal_,
@@ -222,7 +217,7 @@ struct PairDispD3Kernel_dEdIJ {
   : d_x(d_x_), d_f(d_f_), d_cn_v(d_cn_v_), d_dc6_v(d_dc6_v_), d_type(d_type_),
     d_special_lj(d_special_lj_), d_mxci(d_mxci_), d_c6ab(d_c6ab_), d_params(d_params_),
     d_r2r4v(d_r2r4v_), d_ilist_v(d_ilist_v_), d_numneigh(d_numneigh_),
-    k_list(k_list_), self(self_), l_eflag(l_eflag_), l_newton_pair(l_newton_pair_),
+    d_neighbors(d_neighbors_), l_eflag(l_eflag_), l_newton_pair(l_newton_pair_),
     l_nlocal(l_nlocal_), autoang(autoang_)
   {}
 
@@ -232,10 +227,10 @@ struct PairDispD3Kernel_dEdIJ {
     const int   itype = d_type(i);
     const auto  icn   = d_cn_v(i);
     const int   jnum  = d_numneigh(i);
-    const auto  neigh_i = k_list->get_neighbors(i);
+    //const auto  neigh_i = k_list->get_neighbors(i);
 
     for (int jj = 0; jj < jnum; jj++) {
-      const int jenc   = neigh_i(jj);
+      const int jenc   = d_neighbors(i,jj);
       const int j      = jenc & NEIGHMASK;
       const int sbmask = jenc >> SBBITS;
       const int jtype  = d_type(j);
@@ -308,12 +303,13 @@ struct PairDispD3Kernel_dEdIJ {
 
 template<class DeviceType>
 struct PairDispD3Kernel_dEdXYZ {
+  using AT = ArrayTypes<DeviceType>;  
   using exec_space      = typename DeviceType::execution_space;
+  using View2D_neigh    = typename AT::t_neighbors_2d; 
   using View2D_F        = Kokkos::View<F_FLOAT**, Kokkos::LayoutRight, DeviceType>;
   using View1D_F        = Kokkos::View<F_FLOAT*, DeviceType>;
   using View1D_int      = Kokkos::View<int*, DeviceType>;
   using View2D_params   = Kokkos::View<params_d3**, Kokkos::LayoutRight, DeviceType>;
-
   // views
   View2D_F      d_x;
   View2D_F      d_f;
@@ -326,10 +322,7 @@ struct PairDispD3Kernel_dEdXYZ {
   // neighbor list
   View1D_int    d_ilist_v;
   View1D_int    d_numneigh;
-  NeighListKokkos<DeviceType>* k_list;
-
-  // owner for ev_tally
-  PairDispersionD3Kokkos<DeviceType>* self;
+  View2D_neigh  d_neighbors;
 
   // scalars
   bool    l_newton_pair;
@@ -349,8 +342,7 @@ struct PairDispD3Kernel_dEdXYZ {
     View2D_params d_params_,
     View1D_int d_ilist_v_,
     View1D_int d_numneigh_,
-    NeighListKokkos<DeviceType>* k_list_,
-    PairDispersionD3Kokkos<DeviceType>* self_,
+    View2D_neigh d_neighbors_, 
     bool l_newton_pair_,
     bool l_evflag_,
     int  l_nlocal_,
@@ -359,7 +351,7 @@ struct PairDispD3Kernel_dEdXYZ {
     F_FLOAT K1_)
   : d_x(d_x_), d_f(d_f_), d_dc6_v(d_dc6_v_), d_type(d_type_), d_special_lj(d_special_lj_),
     d_rcov(d_rcov_), d_params(d_params_), d_ilist_v(d_ilist_v_), d_numneigh(d_numneigh_),
-    k_list(k_list_), self(self_), l_newton_pair(l_newton_pair_), l_evflag(l_evflag_),
+    d_neighbors(d_neighbors_), l_newton_pair(l_newton_pair_), l_evflag(l_evflag_),
     l_nlocal(l_nlocal_), autoang(autoang_), d_cn_thr(d_cn_thr_), K1(K1_)
   {}
 
@@ -368,11 +360,11 @@ struct PairDispD3Kernel_dEdXYZ {
     const int i     = d_ilist_v(ii);
     const int itype = d_type(i);
     const int jnum  = d_numneigh(i);
-    const auto neigh_i   = k_list->get_neighbors(i);
+    //const auto neigh_i   = k_list->get_neighbors(i);
     const F_FLOAT rcov_i = d_rcov(itype);
 
     for (int jj = 0; jj < jnum; jj++) {
-      const int jenc   = neigh_i(jj);
+      const int jenc   = d_neighbors(i,jj);
       const int j      = jenc & NEIGHMASK;
       const int sbmask = jenc >> SBBITS;
       const int jtype  = d_type(j);
@@ -587,6 +579,7 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numberKK() {
   auto* k_list = static_cast<NeighListKokkos<DeviceType>*>(list);
   auto d_ilist     = k_list->d_ilist;        // View<int* , ... , Device>
   auto d_numneigh  = k_list->d_numneigh;     // View<int* , ... , Device>
+  auto d_neighbors = k_list->d_neighbors;
   //auto d_firstneigh = k_list->d_firstneigh;  // View<int** , ... , Device> (2-D neighbors)
   //if
   // Optional fail-fast checks
@@ -640,9 +633,9 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numberKK() {
       const int itype = d_type(i);
       const int jnum  = d_numneigh(i);
       const auto rcov_i = d_rcov(itype);
-      const auto neigh_i = k_list->get_neighbors(i);
+      //const auto neigh_i = k_list->get_neighbors(i);
       for (int jj = 0; jj < jnum; ++jj) {
-        int jenc = neigh_i(jj);
+        const int jenc = d_neighbors(i, jj);
         const int j = jenc & NEIGHMASK;
         const int jtype = d_type(j);
         const auto rcov_j = d_rcov(jtype);
@@ -692,7 +685,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
   auto* k_list      = static_cast<NeighListKokkos<DeviceType>*>(list);
   auto  d_ilist_v   = k_list->d_ilist;
   auto  d_numneigh  = k_list->d_numneigh;
-
+  auto  d_neighbors = k_list->d_neighbors; 
  
   // device views
   CHECK_DUALVIEW_DEVICE_ALLOC(k_x, "k_x");
@@ -738,7 +731,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
   {
     PairDispD3Kernel_dEdIJ<DeviceType> f1(
       d_x, d_f, d_cn_v, d_dc6_v, d_type, d_special_lj, d_mxci, d_c6ab_v,
-      d_params, d_r2r4, d_ilist_v, d_numneigh, k_list, this,
+      d_params, d_r2r4, d_ilist_v, d_numneigh, d_neighbors,
       l_eflag, l_newton_pair, l_nlocal, autoang_loc);
 
     Kokkos::parallel_for(
@@ -760,7 +753,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
   {
     PairDispD3Kernel_dEdXYZ<DeviceType> f2(
       d_x, d_f, d_dc6_v, d_type, d_special_lj, d_rcov, d_params,
-      d_ilist_v, d_numneigh, k_list, this,
+      d_ilist_v, d_numneigh, d_neighbors,
       l_newton_pair, l_evflag, l_nlocal, autoang_loc, d_cn_thr_val, K1_loc);
 
     Kokkos::parallel_for(

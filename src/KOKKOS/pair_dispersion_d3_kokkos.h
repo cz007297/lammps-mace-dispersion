@@ -517,6 +517,7 @@ class PairDispersionD3Kokkos : public PairDispersionD3
   //Kokkos::DualView<F_FLOAT*,         Kokkos::LayoutRight,DeviceType> k_r2r4;   // per-type
   //Kokkos::DualView<F_FLOAT*,         Kokkos::LayoutRight,DeviceType> k_cn; 
   
+  
   typename AT::tdual_xfloat_1d      k_buf;
   typename AT::tdual_xfloat_2d      k_x; 
   typename AT::tdual_ffloat_2d      k_f;
@@ -524,7 +525,8 @@ class PairDispersionD3Kokkos : public PairDispersionD3
   //typename AT::tdual_double_1d      k_C6Dev, k_cn, k_dc6,  k_r2r4, k_rcov, k_cn_thr, k_rthr;
   typename AT::tdual_double_1d      k_C6Dev, k_cn, k_dc6, k_rcov;
   //typename AT::tdual_int_1d         k_mxci; 
-  typename AT::tdual_neighbors_2d   k_firstneigh; 
+  typename AT::tdual_neighbors_2d   k_neighbors; 
+  //typename AT::tdual_neighbors_2d   k_firstneigh; 
   
   int communicationStage, neighflag ;
   double k_rthr, k_cn_thr; 
