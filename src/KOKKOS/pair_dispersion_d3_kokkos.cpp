@@ -14,37 +14,23 @@
 #include <algorithm>
 #include <stdexcept>
 #include <unordered_map>
+#define CHECK_DUALVIEW_DEVICE_ALLOC(dv, name) \
+  if (!(dv.view_device().data())) { \
+    std::ostringstream oss; \
+    oss << "Device view for '" << name << "' is uninitialized.\n" \
+        << "Triggered at " << __FILE__ << ":" << __LINE__; \
+    throw std::runtime_error(oss.str()); \
+  }
+
+
 
 using namespace LAMMPS_NS;
-
-//static constexpr double K1 = 16.0;
-//static constexpr double K3 = -4.0;
 static constexpr int NUM_ELEMENTS=94;
 static constexpr int N_PARS_COLS=5;  // number columns in C6 table
 static constexpr int N_PARS_ROWS=32395; // number of rows C6 table
-//static constexpr double autoang =  0.52917725 ; // au-Bohr to angstroms
-//static constexpr double autoev  = 27.21140795 ; // au-Hartree to eV
 
 #include <d3_parameters.h>
-//#define KOKKOS_LAMBDA [=, this] 
 
-//template<class DeviceType>
-//class PairDispersionD3Kokkos;
-
-/*
-struct params_d3
-{
-      F_FLOAT cut;      // cutoff distance
-      F_FLOAT cutsq;    // squared cutoff
-      F_FLOAT s6;       // scaling factor for C6 term
-      F_FLOAT s8;       // scaling factor for C8 term (if used)
-      F_FLOAT rs6;      // damping range scaling for C6
-      F_FLOAT rs8;      // damping range scaling for C8
-      F_FLOAT alpha;    // damping exponent
-      F_FLOAT r0_ab;    // reference R0 for pair (i,j)
-      F_FLOAT pad[1];
-};
-*/
 template<class DeviceType>
 PairDispersionD3Kokkos<DeviceType>::PairDispersionD3Kokkos(LAMMPS *lmp)
 :PairDispersionD3(lmp)
@@ -313,7 +299,7 @@ struct PairDispD3Kernel_dEdIJ {
         Kokkos::atomic_add(&d_f(j,2), -fz);
 
         if (l_eflag) {
-          self->ev_tally(i, j, l_nlocal, l_newton_pair, evdwl_local, F_FLOAT(0.0), fpair, delx, dely, delz);
+          //self->ev_tally(i, j, l_nlocal, l_newton_pair, evdwl_local, F_FLOAT(0.0), fpair, delx, dely, delz);
         }
       }
     }
@@ -425,33 +411,13 @@ struct PairDispD3Kernel_dEdXYZ {
         }
 
         if (l_evflag) {
-          self->ev_tally(i, j, l_nlocal, l_newton_pair, F_FLOAT(0.0), F_FLOAT(0.0), fpair, delx, dely, delz);
+          //self->ev_tally(i, j, l_nlocal, l_newton_pair, F_FLOAT(0.0), F_FLOAT(0.0), fpair, delx, dely, delz);
         }
       }
     }
   }
 };
 
-
-
-
-/*
-template<class DeviceType>
-PairDispersionD3Kokkos<DeviceType>::PairDispersionD3Kokkos(LAMMPS *lmp)
-:PairDispersionD3(lmp)
-{
-  comm_forward = 2;
-  comm_reverse = 2;
-  
-  respa_enable = 0;
-  kokkosable = 1;
-  atomKK = (AtomKokkos *) atom ; 
-  execution_space = ExecutionSpaceFromDevice<DeviceType>::space;
-  datamask_read = X_MASK | F_MASK | TYPE_MASK;
-  datamask_modify = F_MASK;
-  damping_type = "zero_damping";
-}
-*/
 
 template<class DeviceType>
 PairDispersionD3Kokkos<DeviceType>::~PairDispersionD3Kokkos()
@@ -472,7 +438,7 @@ PairDispersionD3Kokkos<DeviceType>::~PairDispersionD3Kokkos()
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::allocateKK()
 {
-  //PairDispersionD3::allocate();
+  PairDispersionD3::allocate();
   
   int n = atom->ntypes;
   
@@ -480,9 +446,12 @@ void PairDispersionD3Kokkos<DeviceType>::allocateKK()
   memory->destroy(mxci);
   memory->destroy(r2r4);
   memory->destroy(rcov);
-  memoryKK->create_kokkos(k_mxci, mxci, n+1, "pair:mxci");
-  memoryKK->create_kokkos(k_r2r4, r2r4, n+1, "pair:r2r4");
-  memoryKK->create_kokkos(k_rcov, rcov, n+1, "pair:rcov");
+  memoryKK->create_kokkos(k_mxci,  mxci,       n+1, "pair:mxci");
+  memoryKK->create_kokkos(k_r2r4,  r2r4,       n+1, "pair:r2r4");
+  memoryKK->create_kokkos(k_rcov,  rcov,       n+1, "pair:rcov");
+  memoryKK->create_kokkos(k_x,     atom->x,    n, 3, "pair:x");
+  memoryKK->create_kokkos(k_f,     atom->f,    n, 3, "pair:f");
+  memoryKK->create_kokkos(k_type,  atom->type, n,   "pair:type");
 }
 
 template<class DeviceType>
@@ -501,6 +470,24 @@ void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
   // Call base class 
   PairDispersionD3::coeff(narg, arg);
   allocateKK();
+ 
+  atomKK = (AtomKokkos*) atom;
+  atomKK->sync(execution_space, datamask_read);
+  //atomKK->sync(LMPHostType, TYPE_MASK);
+  
+  for (int i = 0; i < std::min(atom->nlocal, 10); i++) 
+  {
+    printf("DEBUG type[%d] = %d\n", i, atom->type[i]);
+  }
+
+  for (int idx = 0; idx < atom->nlocal; idx++) 
+  {
+    printf("nlocal=%d, idx=%d, type=%d, ntypes=%d\n", atom->nlocal, idx, atom->type[idx], atom->ntypes);
+    if (atom->type[idx] < 1 || atom->type[idx] > atom->ntypes) 
+    {
+      error->all(FLERR, "Invalid atom type %d at local index %d (ntypes=%d)", atom->type[idx], idx, atom->ntypes);
+    }
+  }
 }
 
 template<class DeviceType>
@@ -562,6 +549,10 @@ void PairDispersionD3Kokkos<DeviceType>::sync_coeffs_to_device()
   // ---- mxci + c6ab ----
   int gi_max = 0, gj_max = 0;
   for (int t = 1; t <= ntypes; t++) {
+    if (mxci[t] < 0 || mxci[t] >= 5)
+    {
+      error->all(FLERR, "mxci[%d] out of range: %d (must be 0..4)", t, mxci[t]);
+    }
     gi_max = std::max(gi_max, mxci[t]);
     gj_max = std::max(gj_max, mxci[t]);
   }
@@ -572,7 +563,7 @@ void PairDispersionD3Kokkos<DeviceType>::sync_coeffs_to_device()
   
   init_dualview_from_host<decltype(k_c6ab), typename DeviceType::execution_space>(k_c6ab, [&](auto &hv, int i, int j, int gi, int gj, int k) 
   {
-    if (gi <= mxci[i] && gj <= mxci[j]) hv(i,j,gi,gj,k) = c6ab[i][j][gi][gj][k];
+    if (gi <= mxci[i] && gj <= mxci[j]) { hv(i,j,gi,gj,k) = c6ab[i][j][gi][gj][k];} else { hv(i,j,gi,gj,k) = 0.0 ;} 
   });
 
 
@@ -603,18 +594,33 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numberKK() {
   auto d_ilist     = k_list->d_ilist;        // View<int* , ... , Device>
   auto d_numneigh  = k_list->d_numneigh;     // View<int* , ... , Device>
   //auto d_firstneigh = k_list->d_firstneigh;  // View<int** , ... , Device> (2-D neighbors)
-
+  //if
   // Optional fail-fast checks
   if (!d_ilist.data() || !d_numneigh.data()) {
     error->all(FLERR, "Device neighbor list not available");
   }
+ 
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_rcov, "k_rcov"); 
+  // Ensure the device-side allocation exists
+  k_x.modify_host();     k_x.template sync<DeviceType>();
+  k_cn.modify_host();    k_cn.template sync<DeviceType>();
+  k_dc6.modify_host();   k_dc6.template sync<DeviceType>();
+  k_type.modify_host();  k_type.template sync<DeviceType>();
+  k_rcov.modify_host();  k_rcov.template sync<DeviceType>(); 
+
+ 
 
   // 4) Take device views of your arrays
-  auto d_cn   = k_cn.template view<DeviceType>();
-  auto d_dc6  = k_dc6.template view<DeviceType>();
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_x, "k_x");
   auto d_x    = k_x.template view<DeviceType>();
-  auto d_rcov = k_rcov.template view<DeviceType>();   // must be sized to ntypes+1
-  auto d_type = k_type.template view<DeviceType>();   // sized to nmax
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_cn, "k_cn");
+  auto d_cn   = k_cn.template view<DeviceType>();
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_dc6, "k_dc6");
+  auto d_dc6  = k_dc6.template view<DeviceType>();
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_type, "k_type");
+  auto d_type = k_type.template view<DeviceType>();  
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_rcov, "k_rcov");
+  auto d_rcov = k_rcov.template view<DeviceType>(); 
 
   const int nlocal      = atom->nlocal;
   const int nall        = nlocal + atom->nghost;
@@ -640,11 +646,10 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numberKK() {
       const int itype = d_type(i);
       const int jnum  = d_numneigh(i);
       const auto rcov_i = d_rcov(itype);
-
+      const auto neigh_i = k_list->get_neighbors(i);
       for (int jj = 0; jj < jnum; ++jj) {
-        int jenc = d_firstneigh(i, jj);
+        int jenc = neigh_i(jj);
         const int j = jenc & NEIGHMASK;
-
         const int jtype = d_type(j);
         const auto rcov_j = d_rcov(jtype);
 
@@ -670,95 +675,6 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numberKK() {
   comm->forward_comm(this);
 }
 
-/*
-
-template<class DeviceType>
-void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numberKK()
-{
-  // sync 
-  atomKK->sync(execution_space, datamask_read);
-  
-  auto* k_list = static_cast<NeighListKokkos<DeviceType>*>(list);
-
-  if (atom->nmax > nmax)
-  {
-    nmax = atom->nmax;
-    k_cn  = typename  AT::tdual_double_1d("pair:cn",  nmax);
-    k_dc6 = typename AT::tdual_double_1d("pair:dc6", nmax);
-  }
-  
-
- 
-  //NeighListKokkos<DeviceType>* k_list = static_cast<NeighListKokkos<DeviceType>*>(list);
-  auto d_ilist_v       = k_list->d_ilist;
-  auto d_numneigh    = k_list->d_numneigh;
-  //auto k_firstneigh  = k_list->d_firstneigh;
-  //const F_FLOAT d_cn_thr   = this->k_cn_thr;
-  const F_FLOAT d_cn_thr = static_cast<F_FLOAT>(this->cn_thr);
-  
-  int nlocal      = atom->nlocal;
-  int nall        = nlocal + atom->nghost;
-  int newton_pair = force->newton_pair; 
-  
-  auto d_cn_v         = k_cn.template view<DeviceType>();
-  auto d_dc6_v        = k_dc6.template view<DeviceType>(); 
-  //auto d_ilist_v      = k_ilist.template view<DeviceType>();
-  //auto d_numneigh   = k_numneigh.template view<DeviceType>();
-  //auto d_firstneigh = k_firstneigh.template view<DeviceType>();
-  auto d_x          = k_x.template view<DeviceType>();
-  auto d_rcov       = k_rcov.template view<DeviceType>();
-  auto d_type       = k_type.template view<DeviceType>(); 
-   
-  
-  const int inum  = list->inum;
-  
-  Kokkos::parallel_for("ZeroCN_DC6", Kokkos::RangePolicy
-                       <typename DeviceType::execution_space>(0, newton_pair ? nall : nlocal),
-  KOKKOS_LAMBDA (const int i) 
-  {
-    d_cn_v(i)  = F_FLOAT(0);
-    d_dc6_v(i) = F_FLOAT(0);
-  });
- 
-  Kokkos::parallel_for("PairDispersionD3KokkosCalcCNKK",
-  Kokkos::RangePolicy<typename DeviceType::execution_space>(0, inum),
-  KOKKOS_LAMBDA ( const int ii ) 
-  {
-    const int i                     = d_ilist_v(ii);
-    const int itype                 = d_type(i);
-    const int jnum                  = d_numneigh(i); 
-    //const auto * __restrict__ jlist = d_firstneigh(i);
-    // replace d_firstneigh aka jlist with neigh_i
-    const auto neigh_i              = k_list->get_neighbors(i);
-    const auto d_rcov_i              = d_rcov(itype);
-    for (int jj = 0; jj < jnum; jj++)
-    {
-      const int jenc                = neigh_i(jj);
-      const int j                   = jenc & NEIGHMASK;
-      const int jtype               = d_type(j);  
-      const auto d_rcov_j           = d_rcov(jtype); 
-      const F_FLOAT delx            = d_x(i, 0) - d_x(j, 0);
-      const F_FLOAT dely            = d_x(i, 1) - d_x(j, 1); 
-      const F_FLOAT delz            = d_x(i, 2) - d_x(j, 2); 
-      
-      const F_FLOAT rsq             = delx*delx + dely*dely + delz*delz; 
-   
-      if (rsq > d_cn_thr) continue;
-     
-      const F_FLOAT rr              = sqrt(rsq);
-      const F_FLOAT rcov_ij         = (d_rcov_i + d_rcov_j) * autoang; 
-      const F_FLOAT cn_ij           = F_FLOAT(1.0) / ( F_FLOAT(1.0) + exp(-K1 * ((rcov_ij/rr) - F_FLOAT(1.0)))); 
-
-      d_cn_v(i) += cn_ij ; 
-      if (newton_pair || j < nlocal) {Kokkos::atomic_add(&d_cn_v(j), cn_ij);} 
-    }
-  });
- 
-  communicationStage = 1;
-  if (newton_pair) comm->reverse_comm(this);
-  comm->forward_comm(this); 
-}
-*/
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
 {
@@ -779,22 +695,46 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
   auto* k_list      = static_cast<NeighListKokkos<DeviceType>*>(list);
   auto  d_ilist_v   = k_list->d_ilist;
   auto  d_numneigh  = k_list->d_numneigh;
+ 
 
+  k_x.modify_host();             k_x.template sync<DeviceType>();
+  k_f.modify_host();             k_f.template sync<DeviceType>(); 
+  k_cn.modify_host();            k_cn.template sync<DeviceType>(); 
+  k_dc6.modify_host();           k_dc6.template sync <DeviceType>();
+  k_type.modify_host();          k_type.template sync <DeviceType>();
+  k_rcov.modify_host();          k_rcov.template sync <DeviceType>();
+  k_mxci.modify_host();          k_mxci.template sync <DeviceType>();
+  k_c6ab.modify_host();          k_c6ab.template sync <DeviceType>();
+  k_r2r4.modify_host();          k_r2r4.template sync <DeviceType>();
+  k_params.modify_host();        k_params.template sync<DeviceType>();
+  k_special_lj.modify_host();    k_special_lj.template sync<DeviceType>(); 
+  
   // device views
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_x, "k_x");
   auto d_x          = k_x.template view<DeviceType>();
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_f, "k_f");
   auto d_f          = k_f.template view<DeviceType>();
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_type, "k_type");
   auto d_type       = k_type.template view<DeviceType>();
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_special_lj, "k_special_lj");
   auto d_special_lj = k_special_lj.template view<DeviceType>();
 
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_cn, "k_cn"); 
   auto d_cn_v       = k_cn.template view<DeviceType>();
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_dc6, "k_dc6");
   auto d_dc6_v      = k_dc6.template view<DeviceType>();
-
+ 
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_params, "k_params"); 
   auto d_params     = k_params.template view<DeviceType>();
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_r2r4, "k_r2r4"); 
   auto d_r2r4       = k_r2r4.template view<DeviceType>();
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_rcov, "k_rcov");
   auto d_rcov       = k_rcov.template view<DeviceType>();
 
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_mxci, "k_mxci");
   auto d_mxci       = k_mxci.template view<DeviceType>();
-  auto d_c6ab_view  = k_c6ab.template view<DeviceType>();
+  CHECK_DUALVIEW_DEVICE_ALLOC(k_c6ab, "k_c6ab");
+  auto d_c6ab_v  = k_c6ab.template view<DeviceType>();
 
   // constants used on device
   const F_FLOAT autoang_loc  = static_cast<F_FLOAT>(autoang);
@@ -804,7 +744,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
   // 2) main pair interaction kernel: forces + energy + dC6 accumulation
   {
     PairDispD3Kernel_dEdIJ<DeviceType> f1(
-      d_x, d_f, d_cn_v, d_dc6_v, d_type, d_special_lj, d_mxci, d_c6ab_view,
+      d_x, d_f, d_cn_v, d_dc6_v, d_type, d_special_lj, d_mxci, d_c6ab_v,
       d_params, d_r2r4, d_ilist_v, d_numneigh, k_list, this,
       l_eflag, l_newton_pair, l_nlocal, autoang_loc);
 
@@ -842,98 +782,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
   // optional virial via f · r
   if (vflag_fdotr) virial_fdotr_compute();
 }
-
-
-/*
-template<class DeviceType>
-void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
-{
-  // Host-side setup (unchanged)
-  atomKK->sync(execution_space, datamask_read);
-  ev_init(eflag, vflag);
-  calc_coordination_numberKK();
-
-  const bool l_eflag       = eflag;
-  const bool l_newton_pair = force->newton_pair;
-  const int  l_nlocal      = atom->nlocal;
-  const int  inum          = list->inum;
-  const bool l_evflag      = evflag;
-
-  auto *k_list = static_cast<NeighListKokkos<DeviceType>*>(list);
-
-  // Sync input DualViews to device
-  k_params.template sync<DeviceType>();
-  k_r2r4.template  sync<DeviceType>();
-  k_cn.template    sync<DeviceType>();
-
-  // Device views
-  auto d_x          = k_x.template view<DeviceType>();
-  auto d_f          = k_f.template view<DeviceType>();
-  auto d_cn_v       = k_cn.template view<DeviceType>();
-  auto d_dc6_v      = k_dc6.template view<DeviceType>();
-  auto d_type       = k_type.template view<DeviceType>();
-  auto d_special_lj = k_special_lj.template view<DeviceType>();
-  auto d_mxci       = k_mxci.template view<DeviceType>();
-  auto d_c6ab       = k_c6ab.template view<DeviceType>();
-  auto d_params     = k_params.template view<DeviceType>();
-  auto d_r2r4v      = k_r2r4.template view<DeviceType>();
-  auto d_rcov       = k_rcov.template view<DeviceType>();
-
-  auto d_ilist_v    = k_list->d_ilist;
-  auto d_numneigh   = k_list->d_numneigh;
-  auto d_neighbors  = k_list->d_neighbors;
-
-  const F_FLOAT d_cn_thr_val = static_cast<F_FLOAT>(this->k_cn_thr);
-
-  // ======================
-  // Kernel 1: pair forces
-  // ======================
-  PairDispD3Kernel_dEdIJ<DeviceType> functor1{
-    d_x, d_f, d_cn_v, d_dc6_v, d_type,
-    d_special_lj, d_mxci, d_c6ab,
-    d_params, d_r2r4v,
-    d_ilist_v, d_numneigh, d_neighbors,
-    k_list, l_eflag, l_newton_pair, l_nlocal,
-    autoang
-  };
-
-  Kokkos::parallel_for(
-    "PairDispD3KokkosComputeKKdEdIJ",
-    Kokkos::RangePolicy<typename DeviceType::execution_space>(0, inum),
-    functor1
-  );
-
-  k_f.template modify<DeviceType>();
-
-  // Communication stage 2
-  this->communicationStage = 2;
-  if (l_newton_pair) comm->reverse_comm(this);
-  comm->forward_comm(this);
-
-  // =========================
-  // Kernel 2: dCN/dr gradient
-  // =========================
-  PairDispD3Kernel_dEdXYZ<DeviceType> functor2{
-    d_x, d_f, d_dc6_v, d_type, d_special_lj, d_rcov,
-    d_ilist_v, d_numneigh, d_neighbors, d_params,
-    k_list, l_newton_pair, l_evflag, l_nlocal,
-    autoang, d_cn_thr_val, K1
-  };
-
-  Kokkos::parallel_for(
-    "PairDispD3KokkosComputeKKdEdXYZ",
-    Kokkos::RangePolicy<typename DeviceType::execution_space>(0, inum),
-    functor2
-  );
-
-  if (vflag_fdotr) virial_fdotr_compute();
-  k_f.template modify<DeviceType>();
-}
-
-
-
-
-*/
 
 
 // pack_forward_comm
