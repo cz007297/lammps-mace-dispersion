@@ -596,11 +596,11 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numberKK() {
  
   CHECK_DUALVIEW_DEVICE_ALLOC(k_rcov, "k_rcov"); 
   // Ensure the device-side allocation exists
-  k_x.modify_host();     k_x.template sync<DeviceType>();
-  k_cn.modify_host();    k_cn.template sync<DeviceType>();
-  k_dc6.modify_host();   k_dc6.template sync<DeviceType>();
-  k_type.modify_host();  k_type.template sync<DeviceType>();
-  k_rcov.modify_host();  k_rcov.template sync<DeviceType>(); 
+  k_x.template sync<DeviceType>();
+  k_cn.template sync<DeviceType>();
+  k_dc6.template sync<DeviceType>();
+  k_type.template sync<DeviceType>();
+  k_rcov.template sync<DeviceType>(); 
 
  
 
