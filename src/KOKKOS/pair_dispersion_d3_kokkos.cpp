@@ -283,10 +283,12 @@ struct ev_tally
 
 template<class DeviceType>
 struct PairDispD3Kernel_dEdIJ {
-  using AT = ArrayTypes<DeviceType>;
-  using View1D_EF = typename AT::t_efloat_1d;
-  using View2D_EF = typename AT::t_efloat_2d;
   using exec_space      = typename DeviceType::execution_space;
+  using policy_type     = Kokkos::RangePolicy<exec_space>;
+  using index_type      = typename policy_type::index_type;
+  using AT              = ArrayTypes<DeviceType>;
+  using View1D_EF       = typename AT::t_efloat_1d;
+  using View2D_EF       = typename AT::t_efloat_2d;
   using View2D_neigh    = typename AT::t_neighbors_2d;
   using View2D_F        = Kokkos::View<F_FLOAT**, Kokkos::LayoutRight, DeviceType>;
   using View1D_F        = Kokkos::View<F_FLOAT*, DeviceType>;
@@ -333,14 +335,14 @@ struct PairDispD3Kernel_dEdIJ {
     View1D_int       d_ilist_v_,
     View1D_int       d_numneigh_,
     View2D_neigh     d_neighbors_,
-    int              const& l_eflag_,
-    int              const& l_newton_pair_,
-    int              const& l_nlocal_,
-    F_FLOAT          const& autoang_,
-    EV_FLOAT         const& ev_,
-    int              const& vflag_either_,
-    int              const& vflag_global_,
-    int              const& vflag_atom_,
+    int              const l_eflag_,
+    int              const l_newton_pair_,
+    int              const l_nlocal_,
+    F_FLOAT          const autoang_,
+    EV_FLOAT         const ev_,
+    int              const vflag_either_,
+    int              const vflag_global_,
+    int              const vflag_atom_,
     View1D_EF        d_eatom_,
     View2D_EF        d_vatom_)
   : d_x(d_x_), d_f(d_f_), d_cn_v(d_cn_v_), d_dc6_v(d_dc6_v_), d_type(d_type_),
@@ -355,7 +357,7 @@ struct PairDispD3Kernel_dEdIJ {
 
   template<int NEIGHFLAG, int NEWTON_PAIR>
   KOKKOS_INLINE_FUNCTION
-  void operator()(const int ii) const {
+  void operator()(index_type ii) const {
     const int   i     = d_ilist_v(ii);
     const int   itype = d_type(i);
     const auto  icn   = d_cn_v(i);
@@ -440,10 +442,12 @@ struct PairDispD3Kernel_dEdIJ {
 
 template<class DeviceType>
 struct PairDispD3Kernel_dEdXYZ {
+  using exec_space      = typename DeviceType::execution_space;
+  using policy_type     = Kokkos::RangePolicy<exec_space>;
+  using index_type      = typename policy_type::index_type;
   using AT = ArrayTypes<DeviceType>;  
   using View1D_EF       = typename AT::t_efloat_1d;
   using View2D_EF       = typename AT::t_efloat_2d;
-  using exec_space      = typename DeviceType::execution_space;
   using View2D_neigh    = typename AT::t_neighbors_2d; 
   using View2D_F        = Kokkos::View<F_FLOAT**, Kokkos::LayoutRight, DeviceType>;
   using View1D_F        = Kokkos::View<F_FLOAT*, DeviceType>;
@@ -487,16 +491,16 @@ struct PairDispD3Kernel_dEdXYZ {
     View1D_int        d_ilist_v_,
     View1D_int        d_numneigh_,
     View2D_neigh      d_neighbors_, 
-    int               const& l_newton_pair_,
-    int               const& l_evflag_,
-    int               const& l_nlocal_,
-    F_FLOAT           const& autoang_,
-    F_FLOAT           const& d_cn_thr_,
-    F_FLOAT           const& K1_,
-    EV_FLOAT          const& ev_,
-    int               const& vflag_either_,
-    int               const& vflag_global_,
-    int               const& vflag_atom_,
+    int               const l_newton_pair_,
+    int               const l_evflag_,
+    int               const l_nlocal_,
+    F_FLOAT           const autoang_,
+    F_FLOAT           const d_cn_thr_,
+    F_FLOAT           const K1_,
+    EV_FLOAT          const ev_,
+    int               const vflag_either_,
+    int               const vflag_global_,
+    int               const vflag_atom_,
     View1D_EF         d_eatom_,
     View2D_EF         d_vatom_)
   : d_x(d_x_), d_f(d_f_), d_dc6_v(d_dc6_v_), d_type(d_type_), f_special_lj(f_special_lj_),
@@ -510,7 +514,7 @@ struct PairDispD3Kernel_dEdXYZ {
 
   template<int NEIGHFLAG, int NEWTON_PAIR>
   KOKKOS_INLINE_FUNCTION
-  void operator()(const int ii) const {
+  void operator()(index_type ii) const {
     const int i     = d_ilist_v(ii);
     const int itype = d_type(i);
     const int jnum  = d_numneigh(i);
