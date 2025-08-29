@@ -72,6 +72,7 @@ class PairDispersionD3Kokkos : public PairDispersionD3
     enum {EnabledNeighFlags=FULL|HALFTHREAD|HALF};
     
     typedef ArrayTypes<DeviceType> AT; 
+    using View1D_EFLOAT_6 = Kokkos::View<E_FLOAT[6], DeviceType>;
     // override baseclass methods we are not using 
     PairDispersionD3Kokkos(class LAMMPS *);
     ~PairDispersionD3Kokkos() override;
