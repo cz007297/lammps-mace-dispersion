@@ -50,9 +50,6 @@ PairDispersionD3Kokkos<DeviceType>::PairDispersionD3Kokkos(LAMMPS *lmp)
   damping_type = "zero_damping";
 }
 
-
-
-
 struct DC6 
 {
   double C6;
@@ -71,10 +68,6 @@ DC6 get_dC6_res(
     const MXCI_View  &d_mxci,
     const C6AB_View  &d_c6ab)
 {
-  //const inline constexpr double      K3 = -4.0;
-  //const inline constexpr double      K1 = 16.0;
-  //const inline constexpr double autoang =  0.52917725;
-  //const inline constexpr double autoev  = 27.21140795;
   DC6 out;
 
   double c6_ref, cni_ref, cnj_ref;
@@ -124,9 +117,9 @@ DC6 get_dC6_res(
     out.dC6i = 0.0;
     out.dC6j = 0.0;
   }
-
   return out;
 }
+
 template <class DualViewType, class ExecSpace, class FillerFunc>
 inline void init_dualview_from_host(DualViewType &dv, const FillerFunc &filler)
 {
@@ -412,7 +405,6 @@ struct PairDispD3Kernel_dEdXYZ {
   }
 };
 
-
 template<class DeviceType>
 PairDispersionD3Kokkos<DeviceType>::~PairDispersionD3Kokkos()
 {
@@ -454,7 +446,6 @@ void PairDispersionD3Kokkos<DeviceType>::allocateKK()
     }
 }
 
-
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::settings(int narg, char **arg)
 {
@@ -479,7 +470,6 @@ double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j) {
   // Optionally capture cutsq for this pair here into k_params.h_view(i,j).cutsq
   return cut;
 }
-
 
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::init_style() {
@@ -554,16 +544,7 @@ void PairDispersionD3Kokkos<DeviceType>::sync_coeffs_to_device()
     if (gi <= mxci[i] && gj <= mxci[j]) { hv(i,j,gi,gj,k) = c6ab[i][j][gi][gj][k];} else { hv(i,j,gi,gj,k) = 0.0 ;} 
   });
 
-
- 
-  /*
-  init_dualview_from_host<decltype(k_c6ab), decltype([&](auto&,int,int,int,int,int){}), DeviceType>
-    (k_c6ab, [&](auto &hv, int i, int j, int gi, int gj, int k) {
-      if (gi <= mxci[i] && gj <= mxci[j])
-        hv(i,j,gi,gj,k) = c6ab[i][j][gi][gj][k];
-    }); */ 
 }
-
 
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numberKK() {
@@ -678,7 +659,7 @@ template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
 {
 
-  
+  // maybe move elsewhere   
   sync_coeffs_to_device();
   // init energy/virial flags
   ev_init(eflag, vflag);
@@ -791,275 +772,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
 }
 
 
-/*
-template<class DeviceType>
-int PairDispersionD3Kokkos<DeviceType>::pack_forward_comm_kokkos(
-  int n, DAT::tdual_int_1d k_list, DAT::tdual_xfloat_1d &k_buf,
-  int \/\*pbc_flag\*\/, int /*pbc\*\/\)
-{
-  auto d_list = k_list.view_device();
-  auto d_buf  = k_buf.view_device();
-  auto d_cn   = k_cn.view_device();
-  auto d_dc6  = k_dc6.view_device();
-  const int commStage = communicationStage;
-
-  Kokkos::parallel_for(
-    "pack_fwd",
-    Kokkos::RangePolicy<typename DeviceType::execution_space>(0, n),
-    KOKKOS_LAMBDA(const int i) {
-      const int idx = d_list(i);
-      d_buf(i) = (commStage == 1) ? d_cn(idx) : d_dc6(idx);
-    });
-
-  k_buf.template modify<DeviceType>();
-  k_buf.template sync<LMPHostType>();
-  Kokkos::fence();
-  return n;
-}
-
-template<class DeviceType>
-void PairDispersionD3Kokkos<DeviceType>::unpack_forward_comm_kokkos(
-  int n, int first, DAT::tdual_xfloat_1d &k_buf)
-{
-  auto d_buf = k_buf.view_device();
-  auto d_cn  = k_cn.view_device();
-  auto d_dc6 = k_dc6.view_device();
-  const int commStage = communicationStage;
-
-  Kokkos::parallel_for(
-    "unpack_fwd",
-    Kokkos::RangePolicy<typename DeviceType::execution_space>(0, n),
-    KOKKOS_LAMBDA(const int i) {
-      const int idx = first + i;
-      const auto v  = d_buf(i);
-      if (commStage == 1) d_cn(idx)  = v;
-      else                d_dc6(idx) = v;
-    });
-}
-
-template<class DeviceType>
-int PairDispersionD3Kokkos<DeviceType>::pack_reverse_comm_kokkos(
-  int n, int first, DAT::tdual_xfloat_1d &k_buf)
-{
-  auto d_buf = k_buf.view_device();
-  auto d_cn  = k_cn.view_device();
-  auto d_dc6 = k_dc6.view_device();
-  const int commStage = communicationStage;
-
-  Kokkos::parallel_for(
-    "pack_rev",
-    Kokkos::RangePolicy<typename DeviceType::execution_space>(0, n),
-    KOKKOS_LAMBDA(const int i) {
-      const int idx = first + i;
-      d_buf(i) = (commStage == 1) ? d_cn(idx) : d_dc6(idx);
-    });
-
-  k_buf.template modify<DeviceType>();
-  k_buf.template sync<LMPHostType>();
-  Kokkos::fence();
-  return n;
-}
-
-template<class DeviceType>
-void PairDispersionD3Kokkos<DeviceType>::unpack_reverse_comm_kokkos(
-  int n, DAT::tdual_int_1d k_list, DAT::tdual_xfloat_1d &k_buf)
-{
-  auto d_list = k_list.view_device();
-  auto d_buf  = k_buf.view_device();
-  auto d_cn   = k_cn.view_device();
-  auto d_dc6  = k_dc6.view_device();
-  const int commStage = communicationStage;
-
-  Kokkos::parallel_for(
-    "unpack_rev",
-    Kokkos::RangePolicy<typename DeviceType::execution_space>(0, n),
-    KOKKOS_LAMBDA(const int i) {
-      const int idx = d_list(i);
-      const auto v  = d_buf(i);
-      if (commStage == 1) Kokkos::atomic_add(&d_cn(idx),  v);
-      else                Kokkos::atomic_add(&d_dc6(idx), v);
-    });
-}
-
-*/
-
-/* 
-// pack_forward_comm
-template<class DeviceType>
-int PairDispersionD3Kokkos<DeviceType>::pack_forward_comm(
-    int n,
-    DAT::tdual_int_1d k_list,
-    DAT::tdual_xfloat_1d &k_buf,
-    int /\*pbc_flag*\/,
-    int \/*pbc*\/
-) {
-  auto d_list = k_list.view_device();
-  auto d_buf  = k_buf.view_device();
-
-  auto d_cn   = k_cn.view_device();
-  auto d_dc6  = k_dc6.view_device();
-
-  const int commStage = communicationStage;
-
-  Kokkos::parallel_for(
-      "pack_fwd",
-      Kokkos::RangePolicy<typename DeviceType::execution_space>(0, n),
-      KOKKOS_LAMBDA(const int i) {
-        const int idx = d_list(i);
-        d_buf(i) = (commStage == 1) ? d_cn(idx) : d_dc6(idx);
-      });
-
-  // Make device writes visible to host for MPI
-  k_buf.template modify<DeviceType>();
-  k_buf.template sync<LMPHostType>();
-  Kokkos::fence();
-  return n;
-}
-
-// unpack_forward_comm
-template<class DeviceType>
-void PairDispersionD3Kokkos<DeviceType>::unpack_forward_comm(
-    int n,
-    int first,
-    DAT::tdual_xfloat_1d &k_buf
-) {
-  auto d_buf = k_buf.view_device();
-  auto d_cn  = k_cn.view_device();
-  auto d_dc6 = k_dc6.view_device();
-
-  const int commStage = communicationStage;
-
-  Kokkos::parallel_for(
-      "unpack_fwd",
-      Kokkos::RangePolicy<typename DeviceType::execution_space>(0, n),
-      KOKKOS_LAMBDA(const int i) {
-        const int idx = first + i;
-        const auto v  = d_buf(i);
-        if (commStage == 1) d_cn(idx)  = v;
-        else                d_dc6(idx) = v;
-      });
-}
-
-// pack_reverse_comm
-template<class DeviceType>
-int PairDispersionD3Kokkos<DeviceType>::pack_reverse_comm(
-    int n,
-    int first,
-    DAT::tdual_xfloat_1d &k_buf
-) {
-  auto d_buf = k_buf.view_device();
-  auto d_cn  = k_cn.view_device();
-  auto d_dc6 = k_dc6.view_device();
-
-  const int commStage = communicationStage;
-
-  Kokkos::parallel_for(
-      "pack_rev",
-      Kokkos::RangePolicy<typename DeviceType::execution_space>(0, n),
-      KOKKOS_LAMBDA(const int i) {
-        const int idx = first + i;
-        d_buf(i) = (commStage == 1) ? d_cn(idx) : d_dc6(idx);
-      });
-
-  k_buf.template modify<DeviceType>();
-  k_buf.template sync<LMPHostType>();
-  Kokkos::fence();
-  return n;
-}
-
-// unpack_reverse_comm
-template<class DeviceType>
-void PairDispersionD3Kokkos<DeviceType>::unpack_reverse_comm(
-    int n,
-    DAT::tdual_int_1d k_list,
-    DAT::tdual_xfloat_1d &k_buf
-) {
-  auto d_list = k_list.view_device();
-  auto d_buf  = k_buf.view_device();
-  auto d_cn   = k_cn.view_device();
-  auto d_dc6  = k_dc6.view_device();
-
-  const int commStage = communicationStage;
-
-  Kokkos::parallel_for(
-      "unpack_rev",
-      Kokkos::RangePolicy<typename DeviceType::execution_space>(0, n),
-      KOKKOS_LAMBDA(const int i) {
-        const int idx = d_list(i);
-        const auto v  = d_buf(i);
-        if (commStage == 1) Kokkos::atomic_add(&d_cn(idx),  v);
-        else                Kokkos::atomic_add(&d_dc6(idx), v);
-      });
-}
-
-*/
-// base class overrides 
-
-/*
-template<class DeviceType>
-int PairDispersionD3Kokkos<DeviceType>::pack_forward_comm(
-    int n, int *list, double *buf, int pbc_flag, int *pbc)
-{
-  // simplest: host mirror copy
-  int m = 0;
-  if (communicationStage == 1) {
-    k_cn.sync_host();
-    for (int i = 0; i < n; i++) buf[m++] = k_cn.h_view(list[i]);
-  } else {
-    k_dc6.sync_host();
-    for (int i = 0; i < n; i++) buf[m++] = k_dc6.h_view(list[i]);
-  }
-  return m;
-}
-
-template<class DeviceType>
-void PairDispersionD3Kokkos<DeviceType>::unpack_forward_comm(
-    int n, int first, double *buf)
-{
-  int m = 0;
-  int last = first + n;
-  if (communicationStage == 1) {
-    for (int i = first; i < last; i++) k_cn.h_view(i)  = buf[m++];
-    k_cn.modify_host();
-  } else {
-    for (int i = first; i < last; i++) k_dc6.h_view(i) = buf[m++];
-    k_dc6.modify_host();
-  }
-}
-
-template<class DeviceType>
-int PairDispersionD3Kokkos<DeviceType>::pack_reverse_comm(
-    int n, int first, double *buf)
-{
-  int m = 0;
-  int last = first + n;
-  if (communicationStage == 1) {
-    k_cn.sync_host();
-    for (int i = first; i < last; i++) buf[m++] = k_cn.h_view(i);
-  } else {
-    k_dc6.sync_host();
-    for (int i = first; i < last; i++) buf[m++] = k_dc6.h_view(i);
-  }
-  return m;
-}
-
-template<class DeviceType>
-void PairDispersionD3Kokkos<DeviceType>::unpack_reverse_comm(
-    int n, int *list, double *buf)
-{
-  int m = 0;
-  if (communicationStage == 1) {
-    for (int i = 0; i < n; i++) k_cn.h_view(list[i]) += buf[m++];
-    k_cn.modify_host();
-  } else {
-    for (int i = 0; i < n; i++) k_dc6.h_view(list[i]) += buf[m++];
-    k_dc6.modify_host();
-  }
-}
-
-*/
-
-// newpack 
 
 template<class DeviceType>
 int PairDispersionD3Kokkos<DeviceType>::pack_forward_comm_kokkos(int n,
@@ -1070,6 +782,11 @@ int PairDispersionD3Kokkos<DeviceType>::pack_forward_comm_kokkos(int n,
 {
   d_sendlist = k_sendlist.view<DeviceType>();
   buf_v      = buf.view<DeviceType>();
+
+  
+  //d_cn  = k_cn.template view<DeviceType>;
+  //d_dc6 = d_dc6.template view<DeviceType>; 
+
   if (communicationStage == 1)
   {
     Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagPairDD3PackForwardCommCN>(0,n), *this);
@@ -1086,7 +803,7 @@ KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3PackForwardCommCN, const int &i) const
 {
   int j = d_sendlist(i);
-  buf_v[i] = d_cn[j];
+  buf_v[i] = d_cn(j);
 }
 
 template<class DeviceType>
@@ -1094,7 +811,7 @@ KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3PackForwardCommDC6, const int &i) const
 {
   int j = d_sendlist(i);
-  buf_v[i] = d_dc6[j];
+  buf_v[i] = d_dc6(j);
 }
 
 // unpack 
@@ -1120,15 +837,86 @@ template<class DeviceType>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3UnpackForwardCommCN, const int &i) const
 {
-  d_cn[i + first] = buf_v[i];
+  d_cn(i + first) = buf_v(i);
 }
 
 template<class DeviceType>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3UnpackForwardCommDC6, const int &i) const
 {
-  d_dc6[i + first] = buf_v[i];
+  d_dc6(i + first) = buf_v(i);
 }
+
+
+template<class DeviceType>
+int PairDispersionD3Kokkos<DeviceType>::pack_reverse_comm_kokkos(int n,
+                                                                 int first_in,
+                                                                 DAT::tdual_xfloat_1d &buf)
+{
+  buf_v = buf.view<DeviceType>();
+
+  first = first_in;
+
+  if (communicationStage == 1)
+  {
+    Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagPairDD3PackReverseCommCN>(0,n), *this);
+  } 
+  if (communicationStage == 2)
+  {
+    Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagPairDD3PackReverseCommDC6>(0,n), *this);
+  }
+  return n;
+}
+
+template<class DeviceType>
+KOKKOS_INLINE_FUNCTION
+void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3PackReverseCommCN, const int &i) const
+{
+  buf_v(i)    = d_cn(i + first);
+}
+
+template<class DeviceType>
+KOKKOS_INLINE_FUNCTION
+void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3PackReverseCommDC6, const int &i) const
+{
+  buf_v[i]    = d_dc6(i + first);
+}
+
+
+template<class DeviceType>
+void PairDispersionD3Kokkos<DeviceType>::unpack_reverse_comm_kokkos(int n,
+                                                                    DAT::tdual_int_1d k_sendlist, 
+                                                                    DAT::tdual_xfloat_1d &buf)
+{
+  d_sendlist = k_sendlist.view<DeviceType>();
+  buf_v      = buf.view<DeviceType>();
+  
+  if (communicationStage == 1)
+  {
+    Kokkos::parallel_for( Kokkos::RangePolicy<DeviceType, TagPairDD3UnpackReverseCommCN>(0,n), *this);
+  }
+  if (communicationStage == 2)
+  {
+    Kokkos::parallel_for( Kokkos::RangePolicy<DeviceType, TagPairDD3UnpackReverseCommDC6>(0,n), *this);
+  }
+}
+
+template<class DeviceType>
+KOKKOS_INLINE_FUNCTION
+void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3UnpackReverseCommCN, const int &i) const
+{
+  const int j = d_sendlist(i);
+  Kokkos::atomic_add(&d_cn(j), buf_v(i));
+}
+
+template<class DeviceType>
+KOKKOS_INLINE_FUNCTION
+void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3UnpackReverseCommDC6, const int &i) const
+{
+  const int j = d_sendlist(i);
+  Kokkos::atomic_add(&d_dc6(j), buf_v(i));
+}
+
 
 template<class DeviceType>
 int PairDispersionD3Kokkos<DeviceType>::pack_forward_comm(int n,
@@ -1137,7 +925,6 @@ int PairDispersionD3Kokkos<DeviceType>::pack_forward_comm(int n,
                                                           int /*pbc_flag*/,
                                                           int * /*pbc*/)
 {
-
   if (communicationStage == 1)
   {
     k_cn.sync_host();
@@ -1265,5 +1052,3 @@ template class PairDispersionD3Kokkos<Kokkos::Cuda>;
 template class PairDispersionD3Kokkos<Kokkos::Serial>;
 #endif
 }
-
-
