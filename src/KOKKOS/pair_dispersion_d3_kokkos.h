@@ -102,10 +102,12 @@ class PairDispersionD3Kokkos : public PairDispersionD3
   typename AT::tdual_xfloat_1d      buf;
   typename AT::tdual_xfloat_2d      k_x; 
   typename AT::tdual_ffloat_2d      k_f;
-  typename AT::tdual_int_1d         k_list, k_type, k_ilist, k_numneigh, k_special_lj; 
+  typename AT::tdual_int_1d         k_list, k_type, k_ilist, k_numneigh;//, k_special_lj; 
   typename AT::tdual_double_1d      k_C6Dev, k_cn, k_dc6, k_rcov;
   typename AT::tdual_neighbors_2d   k_neighbors; 
-  
+
+  double d_special_lj[4];  
+ 
   int communicationStage, neighflag ;
   double k_rthr, k_cn_thr; 
   
