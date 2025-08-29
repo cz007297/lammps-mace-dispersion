@@ -288,7 +288,7 @@ struct ev_tally
 */
 
 template<class DeviceType>
-struct myev_tally {
+struct ev_tally {
   using AT = ArrayTypes<DeviceType>;
   using exec_space = typename DeviceType::execution_space;
   using View1D_EF = typename AT::t_efloat_1d;
@@ -304,7 +304,11 @@ struct myev_tally {
   View1D_EF d_eatom;
   View2D_EF d_vatom;
 
-  myev_tally(const EV_FLOAT &ev_,
+  KOKKOS_INLINE_FUNCTION
+  ev_tally() = default;
+
+  KOKKOS_INLINE_FUNCTION
+  ev_tally(const EV_FLOAT &ev_,
              View1D_EFLOAT_6  d_vglobal_,
              const int &i_, const int &j_,
              const F_FLOAT &epair_, const F_FLOAT &fpair_,
@@ -537,7 +541,7 @@ struct PairDispD3Kernel_dEdIJ {
 
         if (l_eflag || vflag_either)
         {
-          myev_tally<DeviceType>
+          ev_tally<DeviceType>
           tally { ev, d_vglobal, i, j, l_evdwl,
                   fpair, delx, dely, delz, l_nlocal, 
                   l_neighflag, l_newton_pair, l_eflag,
@@ -679,7 +683,7 @@ struct PairDispD3Kernel_dEdXYZ {
 
         if (l_evflag || vflag_either) 
         {
-          myev_tally<DeviceType>
+          ev_tally<DeviceType>
           tally { ev, d_vglobal, i, j, F_FLOAT(0.0),
                   fpair, delx, dely, delz, l_nlocal, 
                   l_neighflag, l_newton_pair,
