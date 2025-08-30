@@ -498,7 +498,7 @@ struct PairDispD3Kernel_dEdXYZ {
     int               const& vflag_atom_,
     View1D_EF         d_eatom_,
     View2D_EF         d_vatom_)
-  : d_x(d_x_), d_f(d_f_), d_dc6V(d_dc6V), d_typeV(d_typeV_), f_special_lj(f_special_lj_),
+  : d_x(d_x_), d_f(d_f_), d_dc6V(d_dc6V_), d_typeV(d_typeV_), f_special_lj(f_special_lj_),
     d_rcovV(d_rcovV_), d_paramsV(d_paramsV_), d_ilistV(d_ilistV_), d_numneighV(d_numneighV_),
     d_neighborsV(d_neighborsV_), l_newton_pair(l_newton_pair_), l_evflag(l_evflag_),
     l_nlocal(l_nlocal_), l_neighflag(l_neighflag_), l_autoang(l_autoang_), l_cn_thr(l_cn_thr_), K1(K1_),
@@ -635,6 +635,7 @@ void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
 template<class DeviceType>
 double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j) {
   double cut = PairDispersionD3::init_one(i, j);
+  //sync_coeffs_to_device();
   // Optionally capture cutsq for this pair here into k_params.h_view(i,j).cutsq
   return cut;
 }
@@ -653,6 +654,8 @@ void PairDispersionD3Kokkos<DeviceType>::init_style() {
 
   if (neighflag == FULL)
     request->enable_full();
+  
+  //sync_coeffs_to_device();
 }
 
 /*
@@ -862,9 +865,15 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
 {
   eflag = eflag;
   vflag = vflag; 
+  
+  if (!coeffs_synced) 
+  {
+    sync_coeffs_to_device();
+    coeffs_synced = true;
+  }
    
   // maybe move elsewhere   
-  sync_coeffs_to_device();
+  //sync_coeffs_to_device();
   // init energy/virial flags
   ev_init(eflag, vflag);
 

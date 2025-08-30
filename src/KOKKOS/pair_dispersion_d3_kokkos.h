@@ -100,6 +100,7 @@ class PairDispersionD3Kokkos : public PairDispersionD3
     void unpack_reverse_comm_kokkos(int n, DAT::tdual_int_1d k_sendlistV,
                                     DAT::tdual_xfloat_1d &buf);
   protected:
+  bool coeffs_synced = false;
   typename AT::tdual_xfloat_1d      buf;
   typename AT::tdual_xfloat_2d      k_x; 
   typename AT::tdual_ffloat_2d      k_f;
