@@ -345,11 +345,11 @@ struct PairDispD3Kernel_dEdIJ {
     if (i < 0 || i >= d_x.extent_int(0)) Kokkos::abort("bad i");
     const int   itype = d_typeV(i);
     const auto  icn   = d_cnV(i);
-    const int   jnum  = d_numneighV(i);
+    const int   jnum  = d_numneighV(ii);
     //const auto  neigh_i = k_list->get_neighbors(i);
 
     for (int jj = 0; jj < jnum; jj++) {
-      const int jenc   = d_neighborsV(i,jj);
+      const int jenc   = d_neighborsV(ii,jj);
       const int j      = jenc & NEIGHMASK;
       if (j < 0 || j >= d_x.extent_int(0)) continue;
       const int sbmask = jenc >> SBBITS;
@@ -514,12 +514,12 @@ struct PairDispD3Kernel_dEdXYZ {
     if (i >= l_nlocal) return;
     if (i < 0 || i >= d_x.extent_int(0)) Kokkos::abort("bad i") ;
     const int itype = d_typeV(i);
-    const int jnum  = d_numneighV(i);
+    const int jnum  = d_numneighV(ii);
     //const auto neigh_i   = k_list->get_neighbors(i);
     const F_FLOAT rcov_i = d_rcovV(itype);
 
     for (int jj = 0; jj < jnum; jj++) {
-      const int jenc   = d_neighborsV(i,jj);
+      const int jenc   = d_neighborsV(ii,jj);
       const int j      = jenc & NEIGHMASK;
       if (j < 0 || j >= d_x.extent_int(0)) continue;
       const int sbmask = jenc >> SBBITS;
@@ -814,11 +814,11 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numberKK() {
     KOKKOS_LAMBDA(const int &ii) {
       const int i     = d_ilistV[ii];
       const int itype = d_typeV(i);
-      const int jnum  = d_numneighV(i);
+      const int jnum  = d_numneighV(ii);
       const auto rcov_i = d_rcovV(itype);
       //const auto neigh_i = k_list->get_neighbors(i);
       for (int jj = 0; jj < jnum; ++jj) {
-        const int jenc = d_neighborsV(i, jj);
+        const int jenc = d_neighborsV(ii, jj);
         const int j = jenc & NEIGHMASK;
         const int jtype = d_typeV(j);
         const auto rcov_j = d_rcovV(jtype);
@@ -902,7 +902,15 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
   auto  d_ilistV     = k_listV->d_ilist;
   auto  d_numneighV  = k_listV->d_numneigh;
   auto  d_neighborsV = k_listV->d_neighbors; 
-  
+   
+  if (inum > 0) {
+    if (d_ilistV.extent_int(0)    != inum || d_numneighV.extent_int(0) != inum || d_neighborsV.extent_int(0)!= inum) 
+    {
+      error->all(FLERR, "Half-list device neighbor arrays not sized to inum");
+    }
+  }
+
+   
   Few<int,4> f_special_lj;
   f_special_lj[0] = force->special_lj[0];
   f_special_lj[1] = force->special_lj[1];
