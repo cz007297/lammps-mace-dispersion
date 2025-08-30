@@ -90,22 +90,22 @@ class PairDispersionD3Kokkos : public PairDispersionD3
     int pack_reverse_comm(int, int, double*) override;
     void unpack_reverse_comm(int, int*, double*) override;
                               
-    int    pack_forward_comm_kokkos(int n, DAT::tdual_int_1d k_sendlist,
+    int    pack_forward_comm_kokkos(int n, DAT::tdual_int_1d k_sendlistV,
                                     DAT::tdual_xfloat_1d &buf,
                                     int /*pbc_flag*/, int  * /*pbc*/);
     void unpack_forward_comm_kokkos(int n, int first, 
                                     DAT::tdual_xfloat_1d &buf);
     int    pack_reverse_comm_kokkos(int n, int first, 
                                     DAT::tdual_xfloat_1d &buf);
-    void unpack_reverse_comm_kokkos(int n, DAT::tdual_int_1d k_sendlist,
+    void unpack_reverse_comm_kokkos(int n, DAT::tdual_int_1d k_sendlistV,
                                     DAT::tdual_xfloat_1d &buf);
   protected:
   typename AT::tdual_xfloat_1d      buf;
   typename AT::tdual_xfloat_2d      k_x; 
   typename AT::tdual_ffloat_2d      k_f;
-  typename AT::tdual_int_1d         k_list, k_type, k_ilist, k_numneigh;//, k_special_lj; 
-  typename AT::tdual_double_1d      k_C6Dev, k_cn, k_dc6, k_rcov;
-  typename AT::tdual_neighbors_2d   k_neighbors; 
+  typename AT::tdual_int_1d         k_listV, k_typeV, k_ilistV, k_numneighV;//, k_special_lj; 
+  typename AT::tdual_double_1d      k_C6DevV, k_cnV, k_dc6V, k_rcovV;
+  typename AT::tdual_neighbors_2d   k_neighborsV; 
   
   DAT::tdual_efloat_1d        k_eatom;
   DAT::tdual_virial_array     k_vatom;
@@ -115,24 +115,24 @@ class PairDispersionD3Kokkos : public PairDispersionD3
   double d_special_lj[4];  
  
   int communicationStage, neighflag ;
-  double k_rthr, k_cn_thr; 
+  double l_rthr, l_cn_thr; 
   
   // corresponding views for mxci & c6ab
-  Kokkos::DualView<params_d3**, Kokkos::LayoutRight, DeviceType> k_params;
-  Kokkos::DualView<F_FLOAT*, DeviceType>                         k_r2r4;
-  Kokkos::DualView<int*, DeviceType>                             k_mxci;
-  Kokkos::DualView<double*****, Kokkos::LayoutRight, DeviceType> k_c6ab;
+  Kokkos::DualView<params_d3**, Kokkos::LayoutRight, DeviceType> k_paramsV;
+  Kokkos::DualView<F_FLOAT*, DeviceType>                         k_r2r4V;
+  Kokkos::DualView<int*, DeviceType>                             k_mxciV;
+  Kokkos::DualView<double*****, Kokkos::LayoutRight, DeviceType> k_c6abV;
 
   void repack_host_to_dual(int ntypes, int gi_max, int gj_max);
 
   int first;
-  DAT::tdual_int_1d k_sendlist;  
-  typename AT::t_xfloat_1d_um buf_v;
-  typename AT::t_int_1d d_sendlist;
-  typename AT::t_ffloat_1d d_cn;
-  typename AT::t_ffloat_1d d_dc6;
-  HAT::t_ffloat_1d h_cn;
-  HAT::t_ffloat_1d h_dc6;
+  DAT::tdual_int_1d k_sendlistV;  
+  typename AT::t_xfloat_1d_um bufV;
+  typename AT::t_int_1d d_sendlistV;
+  typename AT::t_ffloat_1d d_cnV;
+  typename AT::t_ffloat_1d d_dc6V;
+  HAT::t_ffloat_1d h_cnV;
+  HAT::t_ffloat_1d h_dc6V;
    
 };
 
