@@ -468,8 +468,9 @@ struct PairDispD3Kernel_dEdIJ {
 
   //template<int NEIGHFLAG, int NEWTON_PAIR>
   KOKKOS_INLINE_FUNCTION
-  void operator()(index_type ii) const {
-    const int   i     = d_ilist_v(ii);
+  void operator()(const index_type &ii) const {
+    const int   i     = d_ilist_v[ii];
+    if (i >= l_nlocal) return;
     const int   itype = d_type(i);
     const auto  icn   = d_cn_v(i);
     const int   jnum  = d_numneigh(i);
@@ -635,8 +636,9 @@ struct PairDispD3Kernel_dEdXYZ {
 
   //template<int NEIGHFLAG, int NEWTON_PAIR>
   KOKKOS_INLINE_FUNCTION
-  void operator()(index_type ii) const {
-    const int i     = d_ilist_v(ii);
+  void operator()(const index_type &ii) const {
+    const int i     = d_ilist_v[ii];
+    if (i >= l_nlocal) return;
     const int itype = d_type(i);
     const int jnum  = d_numneigh(i);
     //const auto neigh_i   = k_list->get_neighbors(i);
@@ -764,6 +766,23 @@ double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j) {
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::init_style() {
   PairDispersionD3::init_style();
+
+  // Make sure neighflag matches the Kokkos execution space
+  neighflag = lmp->kokkos->neighflag;
+
+  auto request = neighbor->find_request(this);
+  request->set_kokkos_host(std::is_same_v<DeviceType,LMPHostType> &&
+                           !std::is_same_v<DeviceType,LMPDeviceType>);
+  request->set_kokkos_device(std::is_same_v<DeviceType,LMPDeviceType>);
+
+  if (neighflag == FULL)
+    request->enable_full();
+}
+
+/*
+template<class DeviceType>
+void PairDispersionD3Kokkos<DeviceType>::init_style() {
+  PairDispersionD3::init_style();
  
   auto request = neighbor->find_request(this);
   request->set_kokkos_host(std::is_same_v<DeviceType,LMPHostType> &&
@@ -772,7 +791,7 @@ void PairDispersionD3Kokkos<DeviceType>::init_style() {
   if (neighflag == FULL) request->enable_full();
    
 }
-
+*/
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::sync_coeffs_to_device()
 {
@@ -855,6 +874,12 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numberKK() {
 
   // 3) Get device neighbor list Views/handles
   auto* k_list = static_cast<NeighListKokkos<DeviceType>*>(list);
+  printf("inum=%d, gnum=%d, d_ilist.extent(0)=%d, d_numneigh.extent(0)=%d, d_neighbors.extent(0)=%d\n",
+       list ? list->inum : -1,
+       list ? list->gnum : -1,
+       (int)k_list->d_ilist.extent(0),
+       (int)k_list->d_numneigh.extent(0),
+       (int)k_list->d_neighbors.extent(0));
   auto d_ilist     = k_list->d_ilist;        // View<int* , ... , Device>
   auto d_numneigh  = k_list->d_numneigh;     // View<int* , ... , Device>
   auto d_neighbors = k_list->d_neighbors;
@@ -910,8 +935,8 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numberKK() {
   Kokkos::parallel_for(
     "PairDispersionD3KokkosCalcCNKK",
     Kokkos::RangePolicy<typename DeviceType::execution_space>(0, inum),
-    KOKKOS_LAMBDA(const int ii) {
-      const int i     = d_ilist(ii);
+    KOKKOS_LAMBDA(const int &ii) {
+      const int i     = d_ilist[ii];
       const int itype = d_type(i);
       const int jnum  = d_numneigh(i);
       const auto rcov_i = d_rcov(itype);
@@ -959,12 +984,15 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numberKK() {
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
 {
-
+  eflag = eflag;
+  vflag = vflag; 
+   
   // maybe move elsewhere   
   sync_coeffs_to_device();
   // init energy/virial flags
   ev_init(eflag, vflag);
 
+  
   if (eflag_atom)
   {
     memoryKK->destroy_kokkos(k_eatom, eatom);
@@ -980,6 +1008,10 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
   }
   // 1) coordination numbers (fills k_cn and zeros k_dc6)
   calc_coordination_numberKK();
+
+  atomKK->sync(execution_space, datamask_read);
+  if (eflag || vflag ) atomKK->modified(execution_space, datamask_modify);
+  else atomKK->modified(execution_space,F_MASK);
 
   // common flags and sizes
   // potential error source eflag =! evflag
