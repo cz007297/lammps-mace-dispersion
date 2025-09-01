@@ -160,6 +160,7 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numbersKK()
   d_r0ab_v = k_r0ab_v.template view<DeviceType>();
   d_c6ab_v = k_c6ab_v.template view<DeviceType>();
 
+  copymode = 1;
   // Zero out dc6 and cn
   if (newton_pair)
     Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagPairDD3KokkosCNDC6Initialise>(0, nall), *this);
@@ -404,6 +405,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
   // clear dc6
   Kokkos::deep_copy(d_dc6_v, 0.0);
 
+  copymode=1;
   // -------------------------
   // Stage 1: dE/d(ij) + dc6
   // -------------------------
@@ -475,6 +477,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
   }
 
   if (vflag_fdotr) virial_fdotr_compute();
+  copymode = 0;
 }
 
 // EV version (TeamPolicy)
