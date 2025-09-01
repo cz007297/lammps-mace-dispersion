@@ -439,19 +439,23 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 
   int eflag = eflag_in;
   int vflag = vflag_in;
+  
+  if (atomKK->nmax > nmax) {
+    nmax = atomKK->nmax;
+    memoryKK->grow_kokkos(k_cn_v,  cn,  nmax, "pair:cn");
+    memoryKK->grow_kokkos(k_dc6_v, dc6, nmax, "pair:dc6");
+    if (eflag_atom) {
+      memoryKK->destroy_kokkos(k_eatom, eatom);
+      memoryKK->create_kokkos(k_eatom, eatom, nmax, "pair:eatom");
+      d_eatom = k_eatom.view<DeviceType>();
+    }
+    if (vflag_atom) {
+      memoryKK->destroy_kokkos(k_vatom, vatom);
+      memoryKK->create_kokkos(k_vatom, vatom, nmax, "pair:vatom");
+      d_vatom = k_vatom.view<DeviceType>();
+    }
+  }
 
-  if (eflag_atom)
-  {
-    memoryKK->destroy_kokkos(k_eatom, eatom);
-    memoryKK->create_kokkos(k_eatom, eatom, atom->nmax, "pair:eatom");
-    d_eatom = k_eatom.view<DeviceType>();
-  }
-  if (vflag_atom)
-  {
-    memoryKK->destroy_kokkos(k_vatom, vatom);
-    memoryKK->create_kokkos(k_vatom, vatom, atom->nmax, "pair:vatom");
-    d_vatom = k_vatom.view<DeviceType>();
-  }
 
   special_lj[0] = force->special_lj[0];
   special_lj[1] = force->special_lj[1];
@@ -660,12 +664,13 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdIJ<NEIGHFLA
       }
 
       if (EVFLAG) { this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);}
-  }
+    }
 
+  }
   Kokkos::atomic_add(&d_f(i,0), fix);
   Kokkos::atomic_add(&d_f(i,1), fiy);
   Kokkos::atomic_add(&d_f(i,2), fiz);
-}
+
 
 }
 // NO-EV thin wrapper (TeamPolicy)
