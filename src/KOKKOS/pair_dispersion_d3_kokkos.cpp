@@ -38,14 +38,21 @@ PairDispersionD3Kokkos<DeviceType>::PairDispersionD3Kokkos(LAMMPS *lmp) : PairDi
   execution_space = ExecutionSpaceFromDevice<DeviceType>::space;
   datamask_read = X_MASK | F_MASK | TAG_MASK | TYPE_MASK | ENERGY_MASK | VIRIAL_MASK;
   datamask_modify = F_MASK | ENERGY_MASK | VIRIAL_MASK;
+  nmax = 0; 
 }
 
 template<class DeviceType>
 PairDispersionD3Kokkos<DeviceType>::~PairDispersionD3Kokkos()
 {
-  if(!copymode)
+  if(nmax >0)
   {
-    // Cleanup handled by base class
+    /*dc6 = nullptr;
+    cn  = nullptr;
+    eatom = nullptr;
+    vatom = nullptr;
+    cvatom = nullptr;*/
+    memoryKK->destroy_kokkos(k_cn_v, cn);
+    memoryKK->destroy_kokkos(k_dc6_v, dc6);
   }
 }
 
@@ -55,11 +62,11 @@ void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
   PairDispersionD3::coeff(narg,arg);
   
   int ntypes = atom->ntypes; 
-  int nmax   = atom->nmax;
+  nmax   = atom->nmax;
  
   k_mxci_v = DAT::tdual_float_1d("k_mxci", ntypes+1); 
-  k_cn_v = DAT::tdual_float_1d("k_cn", nmax); 
-  k_dc6_v = DAT::tdual_float_1d("k_dc6", nmax);
+  //k_cn_v = DAT::tdual_float_1d("k_cn", nmax); 
+  //k_dc6_v = DAT::tdual_float_1d("k_dc6", nmax);
   k_r2r4_v = DAT::tdual_float_1d("k_r2r4", ntypes+1);
   k_rcov_v = DAT::tdual_float_1d("k_rcov", ntypes+1);
   k_r0ab_v = DAT::tdual_float_2d("k_r0ab", ntypes+1, ntypes+1);
@@ -103,6 +110,22 @@ void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
   k_rcov_v.template sync<DeviceType>();
   k_r0ab_v.template sync<DeviceType>();
   k_r2r4_v.template sync<DeviceType>();
+}
+
+
+template<class DeviceType>
+void PairDispersionD3Kokkos<DeviceType>::init_style()
+{
+  // Initialize the base class first
+  PairDispersionD3::init_style();
+
+  // adjust neighbor list request for KOKKOS
+  int neighflag = lmp->kokkos->neighflag;
+  auto request = neighbor->find_request(this);
+  request->set_kokkos_host(std::is_same_v<DeviceType,LMPHostType> &&
+                           !std::is_same_v<DeviceType,LMPDeviceType>);
+  request->set_kokkos_device(std::is_same_v<DeviceType,LMPDeviceType>);
+  if (neighflag == FULL) request->enable_full();
 }
 
 template<class DeviceType>
@@ -280,13 +303,15 @@ struct DC6Derive
     acc.dden_j           += term_j;
   }
 };
-/*
+
+
+
 KOKKOS_INLINE_FUNCTION
 void operator+=(DC6Derive &lhs, const DC6Derive &rhs)
 {
   DC6Derive::join(lhs, rhs);
 }
-*/
+
 template<class DeviceType>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::get_dC6KK
@@ -346,6 +371,21 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
   eflag = eflag;
   vflag = vflag;
 
+  if (eflag_atom)
+  {
+    memoryKK->destroy_kokkos(k_eatom, eatom);
+    memoryKK->create_kokkos(k_eatom, eatom, atom->nmax, "pair:eatom");
+    d_eatom = k_eatom.view<DeviceType>();
+  }
+  if (vflag_atom)
+  {
+    memoryKK->destroy_kokkos(k_vatom, vatom);
+    memoryKK->create_kokkos(k_vatom, vatom, atom->nmax, "pair:vatom");
+    d_vatom = k_vatom.view<DeviceType>();
+  }
+
+
+ 
   calc_coordination_numbersKK();
   atomKK->sync(execution_space, X_MASK | F_MASK | TYPE_MASK);
   atomKK->modified(execution_space, F_MASK);
@@ -889,7 +929,7 @@ void PairDispersionD3Kokkos<DeviceType>::ev_tally(EV_FLOAT &ev, const int &i, co
       const F_FLOAT &epair, const F_FLOAT &fpair, const F_FLOAT &delx,
                 const F_FLOAT &dely, const F_FLOAT &delz) const
 {
-  const int EFLAG = eflag;
+  const int EFLAG = eflag_either;
   const int VFLAG = vflag_either;
 
   // The eatom and vatom arrays are atomic for Half/Thread neighbor style

@@ -53,7 +53,8 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     
     void compute(int eflag, int vflag) override; 
     void coeff(int, char**) override;
-    
+    void init_style() override;  
+   
     // Main computation operators
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
@@ -126,6 +127,12 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     typename AT::t_int_1d d_type;
     typename AT::t_neighbors_2d d_neighbors;
     typename AT::t_int_1d d_ilist, d_numneigh;
+   
+    // energy & velocity views
+    DAT::tdual_efloat_1d k_eatom;
+    DAT::tdual_virial_array k_vatom;
+    typename AT::t_efloat_1d d_eatom;
+    typename AT::t_virial_array d_vatom;
     
     // Parameter arrays
     DAT::tdual_float_1d k_mxci_v;
