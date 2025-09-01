@@ -280,7 +280,13 @@ struct DC6Derive
     acc.dden_j           += term_j;
   }
 };
-
+/*
+KOKKOS_INLINE_FUNCTION
+void operator+=(DC6Derive &lhs, const DC6Derive &rhs)
+{
+  DC6Derive::join(lhs, rhs);
+}
+*/
 template<class DeviceType>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::get_dC6KK
@@ -875,6 +881,100 @@ void PairDispersionD3Kokkos<DeviceType>::unpack_reverse_comm(int n,
     k_dc6_v.modify_host();
   }
 }
+
+template<class DeviceType>
+template<int NEIGHFLAG, int NEWTON_PAIR>
+KOKKOS_INLINE_FUNCTION
+void PairDispersionD3Kokkos<DeviceType>::ev_tally(EV_FLOAT &ev, const int &i, const int &j,
+      const F_FLOAT &epair, const F_FLOAT &fpair, const F_FLOAT &delx,
+                const F_FLOAT &dely, const F_FLOAT &delz) const
+{
+  const int EFLAG = eflag;
+  const int VFLAG = vflag_either;
+
+  // The eatom and vatom arrays are atomic for Half/Thread neighbor style
+  Kokkos::View<E_FLOAT*, typename DAT::t_efloat_1d::array_layout,typename KKDevice<DeviceType>::value,Kokkos::MemoryTraits<AtomicF<NEIGHFLAG>::value> > v_eatom = k_eatom.view<DeviceType>();
+  Kokkos::View<F_FLOAT*[6], typename DAT::t_virial_array::array_layout,typename KKDevice<DeviceType>::value,Kokkos::MemoryTraits<AtomicF<NEIGHFLAG>::value> > v_vatom = k_vatom.view<DeviceType>();
+
+  if (EFLAG) {
+    if (eflag_atom) {
+      const E_FLOAT epairhalf = 0.5 * epair;
+      if (NEIGHFLAG!=FULL) {
+        if (NEWTON_PAIR || i < nlocal) v_eatom[i] += epairhalf;
+        if (NEWTON_PAIR || j < nlocal) v_eatom[j] += epairhalf;
+      } else {
+        v_eatom[i] += epairhalf;
+      }
+    }
+  }
+
+  if (VFLAG) {
+    const E_FLOAT v0 = delx*delx*fpair;
+    const E_FLOAT v1 = dely*dely*fpair;
+    const E_FLOAT v2 = delz*delz*fpair;
+    const E_FLOAT v3 = delx*dely*fpair;
+    const E_FLOAT v4 = delx*delz*fpair;
+    const E_FLOAT v5 = dely*delz*fpair;
+
+    if (vflag_global) {
+      if (NEIGHFLAG!=FULL) {
+        if (NEWTON_PAIR || i < nlocal) {
+          ev.v[0] += 0.5*v0;
+          ev.v[1] += 0.5*v1;
+          ev.v[2] += 0.5*v2;
+          ev.v[3] += 0.5*v3;
+          ev.v[4] += 0.5*v4;
+          ev.v[5] += 0.5*v5;
+        }
+        if (NEWTON_PAIR || j < nlocal) {
+          ev.v[0] += 0.5*v0;
+          ev.v[1] += 0.5*v1;
+          ev.v[2] += 0.5*v2;
+          ev.v[3] += 0.5*v3;
+          ev.v[4] += 0.5*v4;
+          ev.v[5] += 0.5*v5;
+        }
+      } else {
+        ev.v[0] += 0.5*v0;
+        ev.v[1] += 0.5*v1;
+        ev.v[2] += 0.5*v2;
+        ev.v[3] += 0.5*v3;
+        ev.v[4] += 0.5*v4;
+        ev.v[5] += 0.5*v5;
+      }
+    }
+
+    if (vflag_atom) {
+      if (NEIGHFLAG!=FULL) {
+        if (NEWTON_PAIR || i < nlocal) {
+          v_vatom(i,0) += 0.5*v0;
+          v_vatom(i,1) += 0.5*v1;
+          v_vatom(i,2) += 0.5*v2;
+          v_vatom(i,3) += 0.5*v3;
+          v_vatom(i,4) += 0.5*v4;
+          v_vatom(i,5) += 0.5*v5;
+        }
+        if (NEWTON_PAIR || j < nlocal) {
+          v_vatom(j,0) += 0.5*v0;
+          v_vatom(j,1) += 0.5*v1;
+          v_vatom(j,2) += 0.5*v2;
+          v_vatom(j,3) += 0.5*v3;
+          v_vatom(j,4) += 0.5*v4;
+          v_vatom(j,5) += 0.5*v5;
+        }
+      } else {
+        v_vatom(i,0) += 0.5*v0;
+        v_vatom(i,1) += 0.5*v1;
+        v_vatom(i,2) += 0.5*v2;
+        v_vatom(i,3) += 0.5*v3;
+        v_vatom(i,4) += 0.5*v4;
+        v_vatom(i,5) += 0.5*v5;
+      }
+    }
+  }
+}
+
+
 
 namespace LAMMPS_NS {
 #ifdef KOKKOS_ENABLE_CUDA

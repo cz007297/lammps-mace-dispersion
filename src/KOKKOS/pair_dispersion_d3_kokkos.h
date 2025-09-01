@@ -16,7 +16,7 @@ PairStyle(dispersion/d3/host, PairDispersionD3Kokkos<LMPHostType>);
 #include "atom_masks.h"
 #include "neigh_list_kokkos.h"
 
-using namespace LAMMPS_NS;
+namespace LAMMPS_NS{
 
 // Communication tags
 struct TagPairDD3PackForwardCommCN{};
@@ -160,13 +160,13 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     int newton_pair;
     ExecutionSpace execution_space;
 
-    // Missing ev_tally declaration
+    
     template<int NEIGHFLAG, int NEWTON_PAIR>
     KOKKOS_INLINE_FUNCTION
     void ev_tally(EV_FLOAT &ev, const int &i, const int &j,
                   const F_FLOAT &epair, const F_FLOAT &fpair, const F_FLOAT &delx,
                   const F_FLOAT &dely, const F_FLOAT &delz) const;
 };
-
+}
 #endif
 #endif
