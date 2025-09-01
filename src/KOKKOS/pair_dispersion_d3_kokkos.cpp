@@ -44,29 +44,44 @@ PairDispersionD3Kokkos<DeviceType>::PairDispersionD3Kokkos(LAMMPS *lmp) : PairDi
 template<class DeviceType>
 PairDispersionD3Kokkos<DeviceType>::~PairDispersionD3Kokkos()
 {
-  if(nmax >0)
-  {
-    /*dc6 = nullptr;
-    cn  = nullptr;
-    eatom = nullptr;
-    vatom = nullptr;
-    cvatom = nullptr;*/
+  if (copymode) return;
+  
+  // Clean up Kokkos allocations
+  if (allocated) {
     memoryKK->destroy_kokkos(k_cn_v, cn);
     memoryKK->destroy_kokkos(k_dc6_v, dc6);
+    
+    if (eflag_atom) memoryKK->destroy_kokkos(k_eatom, eatom);
+    if (vflag_atom) memoryKK->destroy_kokkos(k_vatom, vatom);
   }
+  
+  // Set our managed pointers to nullptr - others should already be nullptr from coeff()
+  cn = nullptr;
+  dc6 = nullptr;
+  eatom = nullptr;
+  vatom = nullptr;
+  allocated = 0;
 }
+
+
 
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
 {
+ 
   PairDispersionD3::coeff(narg,arg);
   
   int ntypes = atom->ntypes; 
   nmax   = atom->nmax;
- 
+  
+    // MOVE THESE HERE - Set base class pointers to nullptr immediately
+  // after we know they won't be used by base class anymore
+  //setflag = nullptr;
+  //cutsq = nullptr;
+  
   k_mxci_v = DAT::tdual_float_1d("k_mxci", ntypes+1); 
-  //k_cn_v = DAT::tdual_float_1d("k_cn", nmax); 
-  //k_dc6_v = DAT::tdual_float_1d("k_dc6", nmax);
+  k_cn_v = DAT::tdual_float_1d("k_cn", nmax); 
+  k_dc6_v = DAT::tdual_float_1d("k_dc6", nmax);
   k_r2r4_v = DAT::tdual_float_1d("k_r2r4", ntypes+1);
   k_rcov_v = DAT::tdual_float_1d("k_rcov", ntypes+1);
   k_r0ab_v = DAT::tdual_float_2d("k_r0ab", ntypes+1, ntypes+1);
@@ -110,6 +125,11 @@ void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
   k_rcov_v.template sync<DeviceType>();
   k_r0ab_v.template sync<DeviceType>();
   k_r2r4_v.template sync<DeviceType>();
+
+  //free all baseclass
+
+
+
 }
 
 
@@ -131,6 +151,12 @@ void PairDispersionD3Kokkos<DeviceType>::init_style()
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numbersKK()
 {
+  
+  if (lmp->comm->me == 0) {
+    printf("DEBUG: inum=%d, nlocal=%d, nall=%d, nmax=%d\n", inum, nlocal, nall, nmax);
+    printf("DEBUG: d_cn_v.extent(0)=%zu, d_dc6_v.extent(0)=%zu\n", 
+           d_cn_v.extent(0), d_dc6_v.extent(0));
+  }
   atomKK->sync(execution_space,datamask_read);
   d_x           = atomKK->k_x.view<DeviceType>();
   d_f           = atomKK->k_f.view<DeviceType>();
@@ -138,18 +164,26 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numbersKK()
   nlocal      = atomKK->nlocal;
   nall        = atomKK->nlocal + atomKK->nghost;
   newton_pair = force->newton_pair; 
-
   NeighListKokkos<DeviceType>* k_list = static_cast<NeighListKokkos<DeviceType>*>(list);
   d_numneigh = k_list->d_numneigh;
   d_neighbors = k_list->d_neighbors;
   d_ilist = k_list->d_ilist;
   inum = list->inum;
+ 
+  
 
+  // Add debug output
+  if (lmp->comm->me == 0) {
+    printf("DEBUG: BEFORE inum=%d, nlocal=%d, nall=%d, nmax=%d\n", inum, nlocal, nall, nmax);
+  }
+   
+ 
   if (atomKK->nmax > nmax)
   {
     nmax = atomKK->nmax;
     memoryKK->grow_kokkos(k_cn_v, cn, nmax, "pair:cn");
-    memoryKK->grow_kokkos(k_dc6_v, dc6, nmax, "pair:dc6"); 
+    memoryKK->grow_kokkos(k_dc6_v, dc6, nmax, "pair:dc6");
+    //allocated = 1; 
   }
 
   d_cn_v  = k_cn_v.template view<DeviceType>();
@@ -159,7 +193,21 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numbersKK()
   d_rcov_v = k_rcov_v.template view<DeviceType>();
   d_r0ab_v = k_r0ab_v.template view<DeviceType>();
   d_c6ab_v = k_c6ab_v.template view<DeviceType>();
+  
+  
+  // Add debug output after views are set
+  if (lmp->comm->me == 0) {
+    printf("DEBUG: after views  d_cn_v.extent(0)=%zu, d_dc6_v.extent(0)=%zu\n", 
+           d_cn_v.extent(0), d_dc6_v.extent(0));
+  }
 
+  // Add early return if no atoms to process
+  if (inum == 0 || nlocal == 0) {
+    if (lmp->comm->me == 0) {
+      printf("DEBUG: Early return - inum=%d, nlocal=%d\n", inum, nlocal);
+    }
+    return;
+  }
   copymode = 1;
   // Zero out dc6 and cn
   if (newton_pair)
@@ -277,10 +325,16 @@ struct DC6Derive
                                int iat, int jat, int ci, int cj, 
                                double cni, double cnj, DC6Derive &acc)
   {
-    double c6_ref         = d_c6ab_v(iat, jat, ci, cj, 0);
-    c6_ref               *= autoev * pow(autoang, 6);
+    // Add bounds checking
+    if (iat >= d_c6ab_v.extent(0) || jat >= d_c6ab_v.extent(1) ||
+        ci >= d_c6ab_v.extent(2) || cj >= d_c6ab_v.extent(3)) {
+      return;
+    }
+    
+    double c6_ref = d_c6ab_v(iat, jat, ci, cj, 0);
+    c6_ref *= autoev * pow(autoang, 6);
     if (c6_ref <= 0.0) return; 
-     
+   
     const double cni_ref  = d_c6ab_v(iat, jat, ci, cj, 1);
     const double cnj_ref  = d_c6ab_v(iat, jat, ci, cj, 2);
   
@@ -328,6 +382,14 @@ void PairDispersionD3Kokkos<DeviceType>::get_dC6KK
 
   DC6Derive team_acc;
   DC6Derive::init(team_acc);
+  if (iat >= d_c6ab_v.extent(0) || jat >= d_c6ab_v.extent(1)) {
+    Kokkos::single(Kokkos::PerTeam(team), [&]() {
+      C6 = 0.0;
+      dC6_dCNi = 0.0;
+      dC6_dCNj = 0.0;
+    });
+    return;
+  }
   
   // Outer loop splits Ci across team threads
   Kokkos::parallel_reduce(
@@ -342,7 +404,11 @@ void PairDispersionD3Kokkos<DeviceType>::get_dC6KK
         Kokkos::ThreadVectorRange(team, Cj),
         [&](const int cj, DC6Derive &acc_inner)
         {
-          DC6Derive::accumulate_cell(d_c6ab_v, iat, jat, ci, cj, cni, cnj, acc_inner);
+          //DC6Derive::accumulate_cell(d_c6ab_v, iat, jat, ci, cj, cni, cnj, acc_inner);
+                    // Add bounds checking here too
+          if (ci < d_c6ab_v.extent(2) && cj < d_c6ab_v.extent(3)) {
+            DC6Derive::accumulate_cell(d_c6ab_v, iat, jat, ci, cj, cni, cnj, acc_inner);
+          }
         },
         row
        );
@@ -388,6 +454,12 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag, int vflag)
 
  
   calc_coordination_numbersKK();
+ 
+  // Early return if no atoms to process
+  if (list->inum == 0) {
+    return;
+  } 
+ 
   atomKK->sync(execution_space, X_MASK | F_MASK | TYPE_MASK);
   atomKK->modified(execution_space, F_MASK);
   ev_init(eflag, vflag);
@@ -490,10 +562,13 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdIJ<NEIGHFLA
   if (ii >= inum) return;
 
   const int i = d_ilist[ii];
+  if (i >= nlocal) return;
   const double xi = d_x(i,0);
   const double yi = d_x(i,1);
   const double zi = d_x(i,2);
   const int itype = d_type(i);
+
+  if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
   double fix = 0.0, fiy = 0.0, fiz = 0.0;
 
@@ -599,11 +674,14 @@ KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZ<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int& ii, EV_FLOAT& ev) const
 {
   const int i = d_ilist[ii];
+  if (ii >= inum) return;
   const double xi = d_x(i,0);
   const double yi = d_x(i,1);
   const double zi = d_x(i,2);
   const int itype = d_type(i);
+  if (i >= nlocal) return ; 
 
+  if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
   double fix = 0.0, fiy = 0.0, fiz = 0.0;
 
   const int jnum = d_numneigh[i];
@@ -1027,4 +1105,5 @@ template class PairDispersionD3Kokkos<LMPDeviceType>;
 template class PairDispersionD3Kokkos<LMPHostType>;
 #endif
 }
+
 
