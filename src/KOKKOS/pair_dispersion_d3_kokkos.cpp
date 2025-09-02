@@ -710,9 +710,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdIJ<NEIGHFLA
         Kokkos::atomic_add(&d_dc6_v(j), rest * dC6_j);
       }
 
-      fix += dx * fpair;
-      fiy += dy * fpair;
-      fiz += dz * fpair;
+      Kokkos::atomic_add(&fix, (dx*fpair));
+      Kokkos::atomic_add(&fiy, (dy*fpair));
+      Kokkos::atomic_add(&fiz, (dz*fpair));
+      //fix += dx * fpair;
+      //fiy += dy * fpair;
+      //fiz += dz * fpair;
 
       if (NEWTON_PAIR || j < nlocal) {
         Kokkos::atomic_add(&d_f(j,0), -(dx * fpair));
@@ -858,10 +861,12 @@ int PairDispersionD3Kokkos<DeviceType>::pack_forward_comm_kokkos(int n,
   if (communicationStage == 1)
   {
     Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagPairDD3PackForwardCommCN>(0,n), *this);
+    k_cn_v.template modify<DeviceType>();
   }
   if (communicationStage == 2)
   {
     Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagPairDD3PackForwardCommDC6>(0,n), *this);
+    k_dc6_v.template modify<DeviceType>();
   }
   return n;
 }
@@ -877,10 +882,12 @@ void PairDispersionD3Kokkos<DeviceType>::unpack_forward_comm_kokkos(int n,
   if (communicationStage == 1)
   {
     Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagPairDD3UnpackForwardCommCN>(0,n), *this);
+    k_cn_v.template modify<DeviceType>();
   }
   if (communicationStage == 2)
   {
     Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagPairDD3UnpackForwardCommDC6>(0,n), *this);
+    k_dc6_v.template modify<DeviceType>(); 
   }
 }
 
@@ -895,10 +902,12 @@ int PairDispersionD3Kokkos<DeviceType>::pack_reverse_comm_kokkos(int n,
   if (communicationStage == 1)
   {
     Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagPairDD3PackReverseCommCN>(0,n), *this);
+    k_cn_v.template modify<DeviceType>();
   }
   if (communicationStage == 2)
   {
     Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagPairDD3PackReverseCommDC6>(0,n), *this);
+    k_dc6_v.template modify<DeviceType>();
   }
   return n;
 }
@@ -928,10 +937,12 @@ void PairDispersionD3Kokkos<DeviceType>::unpack_reverse_comm_kokkos(int n,
   if (communicationStage == 1)
   {
     Kokkos::parallel_for( Kokkos::RangePolicy<DeviceType, TagPairDD3UnpackReverseCommCN>(0,n), *this);
+    k_cn_v.template modify<DeviceType>();
   }
   if (communicationStage == 2)
   {
     Kokkos::parallel_for( Kokkos::RangePolicy<DeviceType, TagPairDD3UnpackReverseCommDC6>(0,n), *this);
+    k_dc6_v.template modify<DeviceType>();
   }
 }
 
