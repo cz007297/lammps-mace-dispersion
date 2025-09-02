@@ -29,7 +29,7 @@
 #include "memory.h"
 #include "neigh_list.h"
 #include "neighbor.h"
-
+#include "update.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -458,7 +458,19 @@ void PairDispersionD3::compute(int eflag, int vflag)
 
   double evdwl = 0.0;
   ev_init(eflag, vflag);
-
+  #ifdef D3_CPU_DEBUG
+  static long long last_step_cpu=-1;
+  static int calls_cpu=0;
+  if (update->ntimestep != last_step_cpu){ last_step_cpu=update->ntimestep; calls_cpu=0; }
+  ++calls_cpu;
+  double pre_sum_cpu=0.0;
+  for (int i=0;i<atom->nlocal;i++){
+    pre_sum_cpu += fabs(atom->f[i][0])+fabs(atom->f[i][1])+fabs(atom->f[i][2]);
+  }
+  printf("D3CPU DEBUG pre sumF=%.6e step=%lld call=%d\n",
+         pre_sum_cpu,(long long)update->ntimestep,calls_cpu);
+  #endif
+  
   calc_coordination_number();
 
   double **x = atom->x;
@@ -689,6 +701,14 @@ void PairDispersionD3::compute(int eflag, int vflag)
       }
     }
   }
+  #ifdef D3_CPU_DEBUG
+  double post_sum_cpu=0.0;
+  for (int i=0;i<atom->nlocal;i++){
+    post_sum_cpu += fabs(atom->f[i][0])+fabs(atom->f[i][1])+fabs(atom->f[i][2]);
+  }
+  printf("D3CPU DEBUG post sumF=%.6e step=%lld call=%d\n",
+         post_sum_cpu,(long long)update->ntimestep,calls_cpu);
+  #endif
   if (vflag_fdotr) virial_fdotr_compute();
 }
 

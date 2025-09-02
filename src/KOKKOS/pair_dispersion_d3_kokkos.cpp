@@ -18,6 +18,10 @@
 #include <stdexcept>
 #include <unordered_map>
 #include "kokkos_few.h"
+#ifdef D3_KK_DEBUG
+#include <cstdio>
+#endif
+
 
 using namespace LAMMPS_NS;
 static constexpr int NUM_ELEMENTS=94;
@@ -36,8 +40,8 @@ PairDispersionD3Kokkos<DeviceType>::PairDispersionD3Kokkos(LAMMPS *lmp) : PairDi
   kokkosable = 1;
   atomKK = (AtomKokkos *) atom;
   execution_space = ExecutionSpaceFromDevice<DeviceType>::space;
-  //datamask_read = X_MASK | TAG_MASK | TYPE_MASK | ENERGY_MASK | VIRIAL_MASK;
-  datamask_read = X_MASK | F_MASK | TAG_MASK | TYPE_MASK | ENERGY_MASK | VIRIAL_MASK;
+  datamask_read = X_MASK | TAG_MASK | TYPE_MASK | ENERGY_MASK | VIRIAL_MASK;
+  //datamask_read = X_MASK | F_MASK | TAG_MASK | TYPE_MASK | ENERGY_MASK | VIRIAL_MASK;
   datamask_modify = F_MASK | ENERGY_MASK | VIRIAL_MASK;
   nmax = 0; 
 }
@@ -445,6 +449,24 @@ static int sbmask_disp(const int jfull) {
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 {
+  #ifdef D3_KK_DEBUG
+  static long long last_step = -1;
+  static int calls_this_step = 0;
+  if (update->ntimestep != last_step) { last_step = update->ntimestep; calls_this_step = 0; }
+  ++calls_this_step;
+  atomKK->sync(Host, F_MASK); // inspect host forces
+  double pre_sum = 0.0;
+  for (int i=0;i<atomKK->nlocal;i++) {
+    pre_sum += std::fabs(atom->f[i][0]) + std::fabs(atom->f[i][1]) + std::fabs(atom->f[i][2]);
+    if (i < 2) {
+      printf("D3KK DEBUG pre i=%d f=(%.6e %.6e %.6e) step=%lld call=%d\n",
+             i, atom->f[i][0], atom->f[i][1], atom->f[i][2],
+             (long long)update->ntimestep, calls_this_step);
+    }
+  }
+  printf("D3KK DEBUG pre Stage0 sumF=%.6e step=%lld call=%d\n",
+         pre_sum, (long long)update->ntimestep, calls_this_step);
+  #endif
   using TeamPolicy = Kokkos::TeamPolicy<DeviceType>;
   using TeamMember = typename TeamPolicy::member_type;
 
@@ -481,12 +503,12 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   if (list->inum == 0) {
     return;
   } 
-  atomKK->sync(execution_space, datamask_read); 
-  if (eflag || vflag)
+  atomKK->sync(execution_space, X_MASK | TAG_MASK | TYPE_MASK); 
+  if (eflag)
     atomKK->modified(execution_space, datamask_modify);
-  else
-    atomKK->modified(execution_space, F_MASK);
-
+  if (vflag)
+    atomKK->modified(execution_space, F_MASK|ENERGY_MASK);
+ 
   ev_init(eflag, vflag); 
 
 
@@ -508,7 +530,20 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   // -------------------------
   // Stage 1: dE/d(ij) + dc6
   // -------------------------
-   
+  #ifdef D3_KK_DEBUG
+  Kokkos::fence();
+  double dc6_pre = 0.0;
+  Kokkos::parallel_reduce("dc6_pre", Kokkos::RangePolicy<DeviceType>(0, atomKK->nlocal),
+    KOKKOS_LAMBDA(const int i, double &acc){
+      acc += fabs(d_dc6_v(i));
+    }, dc6_pre);
+  Kokkos::fence();
+  printf("D3KK DEBUG before Stage1 dc6_L1=%.6e step=%lld call=%d\n",
+         dc6_pre, (long long)update->ntimestep, calls_this_step);
+  #endif 
+
+
+  
       // Stage 1: only HALF + NEWTON=1 instantiations needed now
    if (evflag) {
      EV_FLOAT ev;
@@ -522,7 +557,19 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
        Kokkos::TeamPolicy<DeviceType, TagPairDispDD3dEdIJ<HALF,1,0>>(inum, Kokkos::AUTO()),
        *this);
    }
+  
+  #ifdef D3_KK_DEBUG
+  atomKK->sync(Host, F_MASK);
+  double post1_sum=0.0;
+  for (int i=0;i<atomKK->nlocal;i++) {
+    post1_sum += std::fabs(atom->f[i][0]) + std::fabs(atom->f[i][1]) + std::fabs(atom->f[i][2]);
+  }
+  printf("D3KK DEBUG after Stage1 sumF=%.6e step=%lld call=%d\n",
+         post1_sum, (long long)update->ntimestep, calls_this_step);
+  #endif
    
+
+  
    atomKK->modified(execution_space, F_MASK); 
    // Inter-stage comm: reverse then forward for dc6
    communicationStage = 2;
@@ -535,7 +582,20 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
    k_dc6_v.template sync<DeviceType>();
    
    atomKK->sync(execution_space, F_MASK);
-   // Stage 2
+   
+   #ifdef D3_KK_DEBUG
+   Kokkos::fence();
+   double dc6_post = 0.0;
+   Kokkos::parallel_reduce("dc6_post", Kokkos::RangePolicy<DeviceType>(0, atomKK->nlocal),
+     KOKKOS_LAMBDA(const int i, double &acc){ acc += fabs(d_dc6_v(i)); }, dc6_post);
+   Kokkos::fence();
+   printf("D3KK DEBUG after dc6 comm L1=%.6e step=%lld call=%d\n",
+          dc6_post, (long long)update->ntimestep, calls_this_step);
+   #endif
+
+
+
+    // Stage 2
    if (vflag) {
      EV_FLOAT ev;
      Kokkos::parallel_reduce(
@@ -548,7 +608,15 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
        Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF,1,0>>(0, inum),
        *this);
    }
-    
+   #ifdef D3_KK_DEBUG
+   atomKK->sync(Host, F_MASK);
+   double post2_sum=0.0;
+   for (int i=0;i<atomKK->nlocal;i++) {
+     post2_sum += std::fabs(atom->f[i][0]) + std::fabs(atom->f[i][1]) + std::fabs(atom->f[i][2]);
+   }
+   printf("D3KK DEBUG after Stage2 sumF=%.6e step=%lld call=%d\n",
+          post2_sum, (long long)update->ntimestep, calls_this_step);
+   #endif    
 
 /*
 
