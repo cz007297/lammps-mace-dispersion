@@ -65,6 +65,67 @@ PairDispersionD3Kokkos<DeviceType>::~PairDispersionD3Kokkos()
 }
 
 
+template<class DeviceType>
+double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j)
+{
+  // Let base class do mixing / set r0ab, cutsq, etc.
+  double cut = PairDispersionD3::init_one(i,j);
+
+  // If DualViews not yet allocated (e.g. restart w/ different ntypes), allocate here.
+  int ntypes = atom->ntypes;
+  if (!k_r0ab_v.span()) {
+    k_mxci_v  = DAT::tdual_float_1d("k_mxci", ntypes+1);
+    k_r2r4_v  = DAT::tdual_float_1d("k_r2r4", ntypes+1);
+    k_rcov_v  = DAT::tdual_float_1d("k_rcov", ntypes+1);
+    k_r0ab_v  = DAT::tdual_float_2d("k_r0ab", ntypes+1, ntypes+1);
+    k_cutsq_v = DAT::tdual_float_2d("k_cutsq", ntypes+1, ntypes+1);
+    k_c6ab_v  = tdual_float_5d("k_c6ab", ntypes+1, ntypes+1, 5,5,3);
+
+    // Fill 1D (type) arrays once
+    for (int t=0; t<=ntypes; ++t) {
+      k_mxci_v.h_view(t)  = mxci[t];
+      k_r2r4_v.h_view(t)  = r2r4[t];
+      k_rcov_v.h_view(t)  = rcov[t];
+    }
+  }
+
+  // Copy symmetric pair entries that base just finalized
+  k_r0ab_v.h_view(i,j)  = r0ab[i][j];
+  k_r0ab_v.h_view(j,i)  = r0ab[j][i];  // usually same, but keep symmetric
+  k_cutsq_v.h_view(i,j) = cutsq[i][j];
+  k_cutsq_v.h_view(j,i) = cutsq[j][i];
+
+  // C6 tensor (only once per (i,j); ensure symmetry if needed)
+  for (int gi=0; gi<5; ++gi)
+    for (int gj=0; gj<5; ++gj)
+      for (int k=0; k<3; ++k) {
+        k_c6ab_v.h_view(i,j,gi,gj,k) = c6ab[i][j][gi][gj][k];
+        k_c6ab_v.h_view(j,i,gj,gi,k) = c6ab[j][i][gj][gi][k]; // keep transpose consistent
+      }
+
+  // If this is the final init_one call, push all to device & bind device views
+  if (i == atom->ntypes && j == atom->ntypes) {
+    k_mxci_v.modify_host();  k_mxci_v.template sync<DeviceType>();
+    k_r2r4_v.modify_host();  k_r2r4_v.template sync<DeviceType>();
+    k_rcov_v.modify_host();  k_rcov_v.template sync<DeviceType>();
+    k_r0ab_v.modify_host();  k_r0ab_v.template sync<DeviceType>();
+    k_cutsq_v.modify_host(); k_cutsq_v.template sync<DeviceType>();
+    k_c6ab_v.modify_host();  k_c6ab_v.template sync<DeviceType>();
+
+    d_mxci_v  = k_mxci_v.template view<DeviceType>();
+    d_r2r4_v  = k_r2r4_v.template view<DeviceType>();
+    d_rcov_v  = k_rcov_v.template view<DeviceType>();
+    d_r0ab_v  = k_r0ab_v.template view<DeviceType>();
+    d_cutsq_v = k_cutsq_v.template view<DeviceType>();
+    d_c6ab_v  = k_c6ab_v.template view<DeviceType>();
+
+ 
+#ifdef DEBUG_D3_CUTSQ
+    if (!d_cutsq_v.data()) Kokkos::abort("d_cutsq_v not bound after final init_one");
+#endif
+  }
+  return cut;
+}
 
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
@@ -72,65 +133,6 @@ void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
  
   PairDispersionD3::coeff(narg,arg);
   
-  int ntypes = atom->ntypes; 
-  nmax   = atom->nmax;
-  
-    // MOVE THESE HERE - Set base class pointers to nullptr immediately
-  // after we know they won't be used by base class anymore
-  //setflag = nullptr;
-  //cutsq = nullptr;
-  
-  k_mxci_v = DAT::tdual_float_1d("k_mxci", ntypes+1); 
-  k_cn_v = DAT::tdual_float_1d("k_cn", nmax); 
-  k_dc6_v = DAT::tdual_float_1d("k_dc6", nmax);
-  k_r2r4_v = DAT::tdual_float_1d("k_r2r4", ntypes+1);
-  k_rcov_v = DAT::tdual_float_1d("k_rcov", ntypes+1);
-  k_r0ab_v = DAT::tdual_float_2d("k_r0ab", ntypes+1, ntypes+1);
-  k_cutsq_v = DAT::tdual_float_2d("k_cutsq", ntypes+1, ntypes+1);
-  k_c6ab_v = tdual_float_5d("k_c6ab", ntypes+1, ntypes+1, 5, 5, 3);
- 
-  auto h_r0ab_v = k_r0ab_v.h_view; 
-  auto h_r2r4_v = k_r2r4_v.h_view;
-  auto h_rcov_v = k_rcov_v.h_view;
-  auto h_c6ab_v = k_c6ab_v.h_view;
-  auto h_mxci_v = k_mxci_v.h_view;
-  auto h_cutsq_v = k_cutsq_v.h_view;
-
-  for (int i = 0; i <= ntypes; i++)
-  {
-    h_r2r4_v(i) = r2r4[i];
-    h_rcov_v(i) = rcov[i];
-    h_mxci_v(i) = mxci[i];
-    for (int j = 0; j <= ntypes; j++)
-    {
-      h_r0ab_v(i,j) = r0ab[i][j];
-      h_cutsq_v(i,j) = cutsq[i][j];
-      for (int gi = 0; gi < 5; gi++)
-      {
-        for (int gj = 0; gj < 5; gj++)
-        {
-          for (int k = 0; k < 3; k++)
-          {
-            h_c6ab_v(i, j, gi, gj, k) = c6ab[i][j][gi][gj][k];
-          }
-        }
-      }
-    }
-  }
- 
-  k_r2r4_v.modify_host();
-  k_rcov_v.modify_host(); 
-  k_r0ab_v.modify_host(); 
-  k_c6ab_v.modify_host();
-  k_mxci_v.modify_host();
-  k_cutsq_v.modify_host();
-  
-  k_mxci_v.template sync<DeviceType>();
-  k_c6ab_v.template sync<DeviceType>();  
-  k_rcov_v.template sync<DeviceType>();
-  k_r0ab_v.template sync<DeviceType>();
-  k_r2r4_v.template sync<DeviceType>();
-  k_cutsq_v.template sync<DeviceType>();
   //free all baseclass
 
 
@@ -199,7 +201,7 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numbersKK()
   d_rcov_v = k_rcov_v.template view<DeviceType>();
   d_r0ab_v = k_r0ab_v.template view<DeviceType>();
   d_c6ab_v = k_c6ab_v.template view<DeviceType>();
-  
+  //d_cutsq_v = k_cutsq_v.template view<DeviceType>(); 
   /* 
   // Add debug output after views are set
   if (lmp->comm->me == 0) {
@@ -498,6 +500,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   // clear dc6
   //Kokkos::deep_copy(d_dc6_v, 0.0);
   
+  d_cutsq_v = k_cutsq_v.template view<DeviceType>(); 
   copymode=1;
   // -------------------------
   // Stage 1: dE/d(ij) + dc6
