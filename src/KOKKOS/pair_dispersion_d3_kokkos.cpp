@@ -86,6 +86,7 @@ void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
   k_r2r4_v = DAT::tdual_float_1d("k_r2r4", ntypes+1);
   k_rcov_v = DAT::tdual_float_1d("k_rcov", ntypes+1);
   k_r0ab_v = DAT::tdual_float_2d("k_r0ab", ntypes+1, ntypes+1);
+  k_cutsq_v = DAT::tdual_float_2d("k_cutsq", ntypes+1, ntypes+1);
   k_c6ab_v = tdual_float_5d("k_c6ab", ntypes+1, ntypes+1, 5, 5, 3);
  
   auto h_r0ab_v = k_r0ab_v.h_view; 
@@ -93,6 +94,7 @@ void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
   auto h_rcov_v = k_rcov_v.h_view;
   auto h_c6ab_v = k_c6ab_v.h_view;
   auto h_mxci_v = k_mxci_v.h_view;
+  auto h_cutsq_v = k_cutsq_v.h_view;
 
   for (int i = 0; i <= ntypes; i++)
   {
@@ -102,6 +104,7 @@ void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
     for (int j = 0; j <= ntypes; j++)
     {
       h_r0ab_v(i,j) = r0ab[i][j];
+      h_cutsq_v(i,j) = cutsq[i][j];
       for (int gi = 0; gi < 5; gi++)
       {
         for (int gj = 0; gj < 5; gj++)
@@ -120,13 +123,14 @@ void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
   k_r0ab_v.modify_host(); 
   k_c6ab_v.modify_host();
   k_mxci_v.modify_host();
+  k_cutsq_v.modify_host();
   
   k_mxci_v.template sync<DeviceType>();
   k_c6ab_v.template sync<DeviceType>();  
   k_rcov_v.template sync<DeviceType>();
   k_r0ab_v.template sync<DeviceType>();
   k_r2r4_v.template sync<DeviceType>();
-
+  k_cutsq_v.template sync<DeviceType>();
   //free all baseclass
 
 
@@ -147,7 +151,7 @@ void PairDispersionD3Kokkos<DeviceType>::init_style()
                            !std::is_same_v<DeviceType,LMPDeviceType>);
   request->set_kokkos_device(std::is_same_v<DeviceType,LMPDeviceType>);
   //if (neighflag == FULL) request->enable_full();
-  neighbor->add_request(this,NeighConst::REQ_HALF);
+  //neighbor->add_request(this,NeighConst::REQ_DEFAULT);
 }
 
 template<class DeviceType>
@@ -224,16 +228,16 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numbersKK()
   communicationStage = 1;
   if (newton_pair) {
     k_cn_v.template modify<DeviceType>();
-    k_dc6_v.template modify<DeviceType>();
+    //k_dc6_v.template modify<DeviceType>();
     comm->reverse_comm(this);
     k_cn_v.template sync<DeviceType>();
-    k_dc6_v.template sync<DeviceType>();
+    //k_dc6_v.template sync<DeviceType>();
   }  
   k_cn_v.template modify<DeviceType>();
-  k_dc6_v.template modify<DeviceType>();
+  //k_dc6_v.template modify<DeviceType>();
   comm->forward_comm(this);
   k_cn_v.template sync<DeviceType>();
-  k_dc6_v.template sync<DeviceType>();
+  //k_dc6_v.template sync<DeviceType>();
   copymode = 0;
 }
 
@@ -249,6 +253,7 @@ template<class DeviceType>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3KokkosCNDC6Calc, const int &ii) const
 {
+  if (ii >= inum) return;    
   const int     i      = d_ilist[ii];
   const int     itype  = d_type(i);
   const int     jnum   = d_numneigh[i];
@@ -491,7 +496,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   d_type = atomKK->k_type.view<DeviceType>();
 
   // clear dc6
-  Kokkos::deep_copy(d_dc6_v, 0.0);
+  //Kokkos::deep_copy(d_dc6_v, 0.0);
   
   copymode=1;
   // -------------------------
@@ -526,17 +531,17 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   // -------------------------
   communicationStage = 2;
   if (newton_pair) {
-    k_cn_v.template modify<DeviceType>();
+    //k_cn_v.template modify<DeviceType>();
     k_dc6_v.template modify<DeviceType>();
     comm->reverse_comm(this);
-    k_cn_v.template sync<DeviceType>();
+    //k_cn_v.template sync<DeviceType>();
     k_dc6_v.template sync<DeviceType>();
   }
   // Always forward (match base code)
-  k_cn_v.template modify<DeviceType>();
+  //k_cn_v.template modify<DeviceType>();
   k_dc6_v.template modify<DeviceType>();
   comm->forward_comm(this);
-  k_cn_v.template sync<DeviceType>();
+  //k_cn_v.template sync<DeviceType>();
   k_dc6_v.template sync<DeviceType>();
 
   // -------------------------
@@ -584,7 +589,6 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdIJ<NEIGHFLA
 { 
   const int ii = team.league_rank();
   if (ii >= inum) return;
-
   const int i = d_ilist[ii];
   if (i >= nlocal) return;
   const double xi = d_x(i,0);
@@ -607,14 +611,16 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdIJ<NEIGHFLA
     const double dz  = zi - d_x(j,2);
     const double rsq = dx*dx + dy*dy + dz*dz;
 
-    if (rsq < rthr && rsq > 0.0) {
+
+    if ( rsq < d_cutsq_v(itype,jtype) )
+    {
       const double r      = sqrt(rsq);
       const double r2inv  = 1.0 / rsq;
       const double r4inv  = r2inv * r2inv;
       const double r6inv  = r4inv * r2inv;
       const double r8inv  = r6inv * r2inv;
       const double r10inv = r8inv * r2inv;
-
+   
       const double cni = d_cn_v(i);
       const double cnj = d_cn_v(j);
 
@@ -688,13 +694,13 @@ template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZ<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int& ii, EV_FLOAT& ev) const
 {
-  const int i = d_ilist[ii];
   if (ii >= inum) return;
+  const int i = d_ilist[ii];
+  if (i >= nlocal) return ; 
   const double xi = d_x(i,0);
   const double yi = d_x(i,1);
   const double zi = d_x(i,2);
   const int itype = d_type(i);
-  if (i >= nlocal) return ; 
 
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
   double fix = 0.0, fiy = 0.0, fiz = 0.0;
@@ -712,18 +718,17 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZ<NEIGHFL
     const double dz = zi - d_x(j,2);
     const double rsq = dx*dx + dy*dy + dz*dz;
 
-    if (rsq < rthr && rsq > 0.0) 
+    if (rsq < d_cutsq_v(itype, jtype)) 
     {
       const double r = sqrt(rsq);
       
-      double dcn;
+      double dcn = 0.0;
       if (rsq < cn_thr)
       { 
         const double rcovij  = (d_rcov_v(itype) + d_rcov_v(jtype))*autoang;
         const double expterm = exp(-K1 * (rcovij / r - 1.0));
         dcn = -K1 * rcovij * expterm / (rsq * (expterm + 1.0) * (expterm + 1.0));
-      }
-      else dcn = 0.0;
+      } 
 
       const double fpair1 = dcn * (d_dc6_v(i) + d_dc6_v(j)) / r ; 
       const double fpair  = fpair1*factor_lj;

@@ -153,6 +153,9 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     DAT::tdual_float_2d k_r0ab_v;
     typename AT::t_float_2d d_r0ab_v;
     
+    DAT::tdual_float_2d k_cutsq_v;
+    typename AT::t_float_2d d_cutsq_v;
+    
     tdual_float_5d k_c6ab_v;
     typename tdual_float_5d::t_dev d_c6ab_v;
     
