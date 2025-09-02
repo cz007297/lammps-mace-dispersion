@@ -147,6 +147,7 @@ void PairDispersionD3Kokkos<DeviceType>::init_style()
                            !std::is_same_v<DeviceType,LMPDeviceType>);
   request->set_kokkos_device(std::is_same_v<DeviceType,LMPDeviceType>);
   //if (neighflag == FULL) request->enable_full();
+  neighbor->add_request(this,NeighConst::REQ_HALF);
 }
 
 template<class DeviceType>
@@ -594,7 +595,6 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdIJ<NEIGHFLA
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
   double fix = 0.0, fiy = 0.0, fiz = 0.0;
-
   const int jnum = d_numneigh[i];
   for (int jj = 0; jj < jnum; ++jj) {
     const int jfull = d_neighbors(i,jj);
@@ -647,7 +647,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdIJ<NEIGHFLA
 
       const double phi = -(s6 * e6 + s8 * e8) * factor_lj;
 
-      const double rest = -(s6 * e6 + s8 * e8) / C6;
+      const double rest = (s6 * e6 + s8 * e8) / C6;
       Kokkos::atomic_add(&d_dc6_v(i), rest * dC6_i);
       if (NEWTON_PAIR || j < nlocal) {
         Kokkos::atomic_add(&d_dc6_v(j), rest * dC6_j);
@@ -658,9 +658,9 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdIJ<NEIGHFLA
       fiz += dz * fpair;
 
       if (NEWTON_PAIR || j < nlocal) {
-        Kokkos::atomic_add(&d_f(j,0), -dx * fpair);
-        Kokkos::atomic_add(&d_f(j,1), -dy * fpair);
-        Kokkos::atomic_add(&d_f(j,2), -dz * fpair);
+        Kokkos::atomic_add(&d_f(j,0), -(dx * fpair));
+        Kokkos::atomic_add(&d_f(j,1), -(dy * fpair));
+        Kokkos::atomic_add(&d_f(j,2), -(dz * fpair));
       }
 
       if (EVFLAG) { this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);}
