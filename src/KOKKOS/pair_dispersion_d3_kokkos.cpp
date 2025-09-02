@@ -501,7 +501,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   d_type = atomKK->k_type.view<DeviceType>();
 
   // clear dc6
-  //Kokkos::deep_copy(d_dc6_v, 0.0);
+  Kokkos::deep_copy(d_dc6_v, 0.0);
   
   d_cutsq_v = k_cutsq_v.template view<DeviceType>(); 
   copymode=1;
@@ -522,7 +522,8 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
        Kokkos::TeamPolicy<DeviceType, TagPairDispDD3dEdIJ<HALF,1,0>>(inum, Kokkos::AUTO()),
        *this);
    }
- 
+   
+   atomKK->modified(execution_space, F_MASK); 
    // Inter-stage comm: reverse then forward for dc6
    communicationStage = 2;
    k_dc6_v.template modify<DeviceType>();
@@ -532,15 +533,16 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
    k_dc6_v.template modify<DeviceType>();
    comm->forward_comm(this);
    k_dc6_v.template sync<DeviceType>();
- 
+   
+   atomKK->sync(execution_space, F_MASK);
    // Stage 2
-   if (evflag) {
+   if (vflag) {
      EV_FLOAT ev;
      Kokkos::parallel_reduce(
        Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF,1,1>>(0, inum),
        *this, ev);
-     if (eflag_global) eng_vdwl += ev.evdwl;
-     if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
+     //if (eflag_global) eng_vdwl += ev.evdwl;
+     //if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
    } else {
      Kokkos::parallel_for(
        Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF,1,0>>(0, inum),
