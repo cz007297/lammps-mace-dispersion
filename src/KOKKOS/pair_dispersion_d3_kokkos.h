@@ -43,9 +43,12 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
 {
   public:
     enum {EnabledNeighFlags=HALF};
+    typedef ArrayTypes<DeviceType> AT;
+    typedef DeviceType device_type;      
+    typename AT::t_x_array_const_um x;
+    typename AT::t_f_array_const_um f; 
     using TeamPolicy = Kokkos::TeamPolicy<DeviceType>;
     using TeamMember = typename TeamPolicy::member_type;
-    typedef ArrayTypes<DeviceType> AT;
     typedef EV_FLOAT value_type;
    
     PairDispersionD3Kokkos(class LAMMPS *);
@@ -170,6 +173,7 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     int newton_pair;
     ExecutionSpace execution_space;
 
+    friend void pair_virial_fdotr_compute<PairDispersionD3Kokkos>(PairDispersionD3Kokkos*);
     
     template<int NEIGHFLAG, int NEWTON_PAIR>
     KOKKOS_INLINE_FUNCTION

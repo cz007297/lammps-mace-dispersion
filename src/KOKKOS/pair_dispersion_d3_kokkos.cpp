@@ -92,8 +92,11 @@ double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j)
   // Copy symmetric pair entries that base just finalized
   k_r0ab_v.h_view(i,j)  = r0ab[i][j];
   k_r0ab_v.h_view(j,i)  = r0ab[j][i];  // usually same, but keep symmetric
-  k_cutsq_v.h_view(i,j) = cutsq[i][j];
-  k_cutsq_v.h_view(j,i) = cutsq[j][i];
+  
+  // IMPORTANT: cutsq not yet set in base arrays; derive from returned cut
+  const float cutsq_local = static_cast<float>(cut * cut);
+  k_cutsq_v.h_view(i,j) = cutsq_local;
+  k_cutsq_v.h_view(j,i) = cutsq_local;
 
   // C6 tensor (only once per (i,j); ensure symmetry if needed)
   for (int gi=0; gi<5; ++gi)
@@ -505,7 +508,49 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   // -------------------------
   // Stage 1: dE/d(ij) + dc6
   // -------------------------
-  if (evflag) {
+   
+      // Stage 1: only HALF + NEWTON=1 instantiations needed now
+   if (evflag) {
+     EV_FLOAT ev;
+     Kokkos::parallel_reduce(
+       Kokkos::TeamPolicy<DeviceType, TagPairDispDD3dEdIJ<HALF,1,1>>(inum, Kokkos::AUTO()),
+       *this, ev);
+     if (eflag_global) eng_vdwl += ev.evdwl;
+     if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
+   } else {
+     Kokkos::parallel_for(
+       Kokkos::TeamPolicy<DeviceType, TagPairDispDD3dEdIJ<HALF,1,0>>(inum, Kokkos::AUTO()),
+       *this);
+   }
+ 
+   // Inter-stage comm: reverse then forward for dc6
+   communicationStage = 2;
+   k_dc6_v.template modify<DeviceType>();
+   comm->reverse_comm(this);
+   k_dc6_v.template sync<DeviceType>();
+ 
+   k_dc6_v.template modify<DeviceType>();
+   comm->forward_comm(this);
+   k_dc6_v.template sync<DeviceType>();
+ 
+   // Stage 2
+   if (evflag) {
+     EV_FLOAT ev;
+     Kokkos::parallel_reduce(
+       Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF,1,1>>(0, inum),
+       *this, ev);
+     if (eflag_global) eng_vdwl += ev.evdwl;
+     if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
+   } else {
+     Kokkos::parallel_for(
+       Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF,1,0>>(0, inum),
+       *this);
+   }
+    
+
+/*
+
+   if (evflag) {
     EV_FLOAT ev;
     if (newton_pair) {
       Kokkos::parallel_reduce(
@@ -573,10 +618,13 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
         Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF,0,0>>(0,inum), 
         *this);
     }
-  }
+  }*/
   // forces modified again
   atomKK->modified(execution_space, datamask_modify);
-  if (vflag_fdotr) virial_fdotr_compute();
+  x = atomKK->k_x.view<DeviceType>();
+  f = atomKK->k_f.view<DeviceType>();
+  if (vflag_fdotr) pair_virial_fdotr_compute(this);
+  //if (vflag_fdotr) virial_fdotr_compute();
   copymode = 0;
   if constexpr (!std::is_same_v<DeviceType, LMPHostType>) {
     atomKK->sync(Host, F_MASK);
