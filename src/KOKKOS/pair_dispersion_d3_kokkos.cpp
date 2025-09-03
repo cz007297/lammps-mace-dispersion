@@ -857,6 +857,82 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   operator()(TagPairDispDD3dEdIJ<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(), ii, ev);
 }
 
+
+template<class DeviceType>
+template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
+KOKKOS_INLINE_FUNCTION
+void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZ<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int& ii, EV_FLOAT& ev) const
+{
+  if (ii >= inum) return;
+  const int i = d_ilist[ii];
+  if (i >= nlocal) return ; 
+  const double xi = d_x(i,0);
+  const double yi = d_x(i,1);
+  const double zi = d_x(i,2);
+  const int itype = d_type(i);
+
+  if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
+  double fix = 0.0, fiy = 0.0, fiz = 0.0;
+
+  const int jnum = d_numneigh[i];
+  for (int jj = 0; jj < jnum; ++jj) 
+  {
+    const int jfull = d_neighbors(i,jj);
+    const double factor_lj = special_lj[sbmask_disp(jfull)]; 
+    const int j = jfull & NEIGHMASK;
+    const int jtype = d_type(j);
+
+    const double dx = xi - d_x(j,0);
+    const double dy = yi - d_x(j,1);
+    const double dz = zi - d_x(j,2);
+    const double rsq = dx*dx + dy*dy + dz*dz;
+
+    if (rsq < d_cutsq_v(itype, jtype)) 
+    {
+      const double r = sqrt(rsq);
+      
+      double dcn = 0.0;
+      if (rsq < cn_thr)
+      { 
+        const double rcovij  = (d_rcov_v(itype) + d_rcov_v(jtype))*autoang;
+        const double expterm = exp(-K1 * (rcovij / r - 1.0));
+        dcn = -K1 * rcovij * expterm / (rsq * (expterm + 1.0) * (expterm + 1.0));
+      } 
+
+      const double fpair1 = dcn * (d_dc6_v(i) + d_dc6_v(j)) / r ; 
+      const double fpair  = fpair1*factor_lj;
+     
+      fix += dx * fpair;
+      fiy += dy * fpair;
+      fiz += dz * fpair;
+
+      if (NEWTON_PAIR || j < nlocal) 
+      {
+        Kokkos::atomic_add(&d_f(j,0), -dx * fpair);
+        Kokkos::atomic_add(&d_f(j,1), -dy * fpair);
+        Kokkos::atomic_add(&d_f(j,2), -dz * fpair);
+      }
+
+      if (EVFLAG) {this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, 0.0, fpair, dx, dy, dz);} 
+    }
+  }
+  
+  Kokkos::atomic_add(&d_f(i,0), fix);
+  Kokkos::atomic_add(&d_f(i,1), fiy);
+  Kokkos::atomic_add(&d_f(i,2), fiz);
+}
+
+// Thin wrapper: NO-EV kernel
+template<class DeviceType>
+template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
+KOKKOS_INLINE_FUNCTION
+void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZ<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int& ii) const
+{
+  EV_FLOAT ev; // unused if EVFLAG==0
+  this->template operator()<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(TagPairDispDD3dEdXYZ<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(), ii, ev);
+}
+
+
 // Communication operators
 template<class DeviceType>
 KOKKOS_INLINE_FUNCTION
