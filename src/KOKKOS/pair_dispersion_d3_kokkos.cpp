@@ -379,6 +379,12 @@ void operator+=(DC6Derive &lhs, const DC6Derive &rhs)
   DC6Derive::join(lhs, rhs);
 }
 
+// Added back: special-bits mask helper previously removed
+KOKKOS_INLINE_FUNCTION
+static int sbmask_disp(const int jfull) {
+  return (jfull >> SBBITS) & 3;
+}
+
 template<class DeviceType>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::get_dC6KK
@@ -421,17 +427,7 @@ void PairDispersionD3Kokkos<DeviceType>::get_dC6KK
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 {
-  #ifdef D3_KK_DEBUG
-  static long long last_step = -1;
-  static int calls_this_step = 0;
-  if (update->ntimestep != last_step) { last_step = update->ntimestep; calls_this_step = 0; }
-  ++calls_this_step;
-  #endif
-
-
-  using TeamPolicy = Kokkos::TeamPolicy<DeviceType>;
-  using TeamMember = typename TeamPolicy::member_type;
-
+  // Removed unused TeamPolicy / TeamMember (RangePolicy now used)
   int eflag = eflag_in;
   int vflag = vflag_in;
   
@@ -754,7 +750,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   if constexpr (!std::is_same_v<DeviceType, LMPHostType>) {
     atomKK->sync(Host, F_MASK);
   }
-  
 }
 
 // EV version (RangePolicy)
@@ -987,7 +982,7 @@ void PairDispersionD3Kokkos<DeviceType>::unpack_reverse_comm_kokkos(int n,
   if (communicationStage == 2)
   {
     Kokkos::parallel_for( Kokkos::RangePolicy<DeviceType, TagPairDD3UnpackReverseCommDC6>(0,n), *this);
-    k_dc6_v.template modify<DeviceType>();
+    k_dc6_v.template modify<DeviceType>(); 
   }
 }
 
@@ -1223,6 +1218,11 @@ void PairDispersionD3Kokkos<DeviceType>::ev_tally(EV_FLOAT &ev, const int &i, co
 namespace LAMMPS_NS {
 #ifdef KOKKOS_ENABLE_CUDA
 template class PairDispersionD3Kokkos<LMPDeviceType>;
+#endif
+#ifdef KOKKOS_ENABLE_SERIAL
+template class PairDispersionD3Kokkos<LMPHostType>;
+#endif
+}
 #endif
 #ifdef KOKKOS_ENABLE_SERIAL
 template class PairDispersionD3Kokkos<LMPHostType>;

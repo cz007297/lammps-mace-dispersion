@@ -181,6 +181,4 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
 }
 #endif
 #endif
-}
-#endif
-#endif
+
