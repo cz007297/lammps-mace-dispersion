@@ -177,6 +177,31 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     void ev_tally(EV_FLOAT &ev, const int &i, const int &j,
                   const F_FLOAT &epair, const F_FLOAT &fpair, const F_FLOAT &delx,
                   const F_FLOAT &dely, const F_FLOAT &delz) const;
+
+    // definitions for scatterviews
+    using KKDeviceType = typename KKDevice<DeviceType>::value;
+    
+    template<typename DataType, typename Layout>
+    using DupScatterView = KKScatterView<DataType, Layout, KKDeviceType, KKScatterSum, KKScatterDuplicated>;
+    
+    template<typename DataType, typename Layout> 
+    using ScatterView    = KKScatterView<DataType, Layout, KKDeviceType, KKScatterSum, KKScatterNonDuplicated>;
+
+  
+    DupScatterView<F_FLOAT*, typename DAT::tdual_float_1d::array_layout>         dup_cn;
+    DupScatterView<F_FLOAT*, typename DAT::tdual_float_1d::array_layout>         dup_dc6;
+    DupScatterView<F_FLOAT*[3], typename DAT::t_f_array::array_layout>           dup_f; 
+    DupScatterView<E_FLOAT*, typename DAT::t_efloat_1d::array_layout>            dup_eatom;
+    DupScatterView<F_FLOAT*[6], typename DAT::t_virial_array::array_layout>      dup_vatom;
+   
+    NonDupScatterView<F_FLOAT*, typename DAT::t_ffloat_1d::array_layout>         ndup_cn;
+    NonDupScatterView<F_FLOAT*, typename DAT::t_ffloat_1d::array_layout>         ndup_dc6;
+    NonDupScatterView<F_FLOAT*[3], typename DAT::t_f_array::array_layout>        ndup_f;
+    NonDupScatterView<E_FLOAT*, typename DAT::t_efloat_1d::array_layout>         ndup_eatom;
+    NonDupScatterView<F_FLOAT*[6], typename DAT::t_virial_array::array_layout>   ndup_vatom;
+
+
+
 };
 }
 #endif
