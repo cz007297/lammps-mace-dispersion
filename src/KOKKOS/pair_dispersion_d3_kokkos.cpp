@@ -338,10 +338,10 @@ struct DC6Derive
                                double cni, double cnj, DC6Derive &acc)
   {
     // Add bounds checking
-    if (iat >= d_c6ab_v.extent(0) || jat >= d_c6ab_v.extent(1) ||
+    /*if (iat >= d_c6ab_v.extent(0) || jat >= d_c6ab_v.extent(1) ||
         ci >= d_c6ab_v.extent(2) || cj >= d_c6ab_v.extent(3)) {
       return;
-    }
+    }*/
     
     double c6_ref = d_c6ab_v(iat, jat, ci, cj, 0);
     c6_ref *= autoev * pow(autoang, 6);
@@ -371,13 +371,13 @@ struct DC6Derive
   }
 };
 
-
-
+/*
 KOKKOS_INLINE_FUNCTION
 void operator+=(DC6Derive &lhs, const DC6Derive &rhs)
 {
   DC6Derive::join(lhs, rhs);
 }
+*/
 
 // Added back: special-bits mask helper previously removed
 KOKKOS_INLINE_FUNCTION
@@ -406,9 +406,9 @@ void PairDispersionD3Kokkos<DeviceType>::get_dC6KK
   }
 
   for (int ci = 0; ci < Ci; ++ci) {
-    if (ci >= d_c6ab_v.extent(2)) break;
+//    if (ci >= d_c6ab_v.extent(2)) break;
     for (int cj = 0; cj < Cj; ++cj) {
-      if (cj >= d_c6ab_v.extent(3)) break;
+  //    if (cj >= d_c6ab_v.extent(3)) break;
       DC6Derive::accumulate_cell(d_c6ab_v, iat, jat, ci, cj, cni, cnj, acc);
     }
   }
@@ -499,7 +499,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 
 
   // clear dc6
-  Kokkos::deep_copy(d_dc6_v, 0.0);
+ // Kokkos::deep_copy(d_dc6_v, 0.0);
   
   d_cutsq_v = k_cutsq_v.template view<DeviceType>();
   
