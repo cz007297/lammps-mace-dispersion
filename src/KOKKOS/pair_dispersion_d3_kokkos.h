@@ -44,11 +44,9 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
   public:
     enum {EnabledNeighFlags=HALF};
     typedef ArrayTypes<DeviceType> AT;
-    typedef DeviceType device_type;      
+    typedef DeviceType device_type;
     typename AT::t_x_array_const_um x;
-    typename AT::t_f_array_const_um f; 
-    using TeamPolicy = Kokkos::TeamPolicy<DeviceType>;
-    using TeamMember = typename TeamPolicy::member_type;
+    typename AT::t_f_array_const_um f;
     typedef EV_FLOAT value_type;
    
     PairDispersionD3Kokkos(class LAMMPS *);
@@ -61,11 +59,11 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     // Main computation operators
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDispDD3dEdIJ<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const TeamMember& team, EV_FLOAT& ev) const; 
+    void operator()(TagPairDispDD3dEdIJ<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii, EV_FLOAT& ev) const; 
 
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDispDD3dEdIJ<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const TeamMember& team) const; 
+    void operator()(TagPairDispDD3dEdIJ<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii) const; 
 
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
@@ -84,8 +82,7 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
   
     // C6 coefficient calculation
     KOKKOS_INLINE_FUNCTION
-    void get_dC6KK(const TeamMember& team,
-                   int itype, int jtype,
+    void get_dC6KK(int itype, int jtype,
                    double cni, double cnj, 
                    double &C6, double &dC6_i, double &dC6_j) const;
     
@@ -181,6 +178,9 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
                   const F_FLOAT &epair, const F_FLOAT &fpair, const F_FLOAT &delx,
                   const F_FLOAT &dely, const F_FLOAT &delz) const;
 };
+}
+#endif
+#endif
 }
 #endif
 #endif
