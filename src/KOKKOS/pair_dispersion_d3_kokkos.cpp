@@ -18,9 +18,6 @@
 #include <stdexcept>
 #include <unordered_map>
 #include "kokkos_few.h"
-#ifdef D3_KK_DEBUG
-#include <cstdio>
-#endif
 
 
 using namespace LAMMPS_NS;
@@ -127,9 +124,6 @@ double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j)
     d_c6ab_v  = k_c6ab_v.template view<DeviceType>();
 
  
-#ifdef DEBUG_D3_CUTSQ
-    if (!d_cutsq_v.data()) Kokkos::abort("d_cutsq_v not bound after final init_one");
-#endif
   }
   return cut;
 }
@@ -167,11 +161,6 @@ template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numbersKK()
 {
   
-  /*if (lmp->comm->me == 0) {
-    printf("DEBUG: inum=%d, nlocal=%d, nall=%d, nmax=%d\n", inum, nlocal, nall, nmax);
-    printf("DEBUG: d_cn_v.extent(0)=%zu, d_dc6_v.extent(0)=%zu\n", 
-           d_cn_v.extent(0), d_dc6_v.extent(0));
-  }*/
   atomKK->sync(execution_space,datamask_read);
   d_x           = atomKK->k_x.view<DeviceType>();
   d_f           = atomKK->k_f.view<DeviceType>();
@@ -183,15 +172,7 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numbersKK()
   d_numneigh = k_list->d_numneigh;
   d_neighbors = k_list->d_neighbors;
   d_ilist = k_list->d_ilist;
-  inum = list->inum;
- 
-  
-  /*
-  // Add debug output
-  if (lmp->comm->me == 0) {
-    printf("DEBUG: BEFORE inum=%d, nlocal=%d, nall=%d, nmax=%d\n", inum, nlocal, nall, nmax);
-  }*/
-   
+  inum = list->inum; 
  
   if (atomKK->nmax > nmax)
   {
@@ -209,20 +190,6 @@ void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numbersKK()
   d_r0ab_v = k_r0ab_v.template view<DeviceType>();
   d_c6ab_v = k_c6ab_v.template view<DeviceType>();
   //d_cutsq_v = k_cutsq_v.template view<DeviceType>(); 
-  /* 
-  // Add debug output after views are set
-  if (lmp->comm->me == 0) {
-    printf("DEBUG: after views  d_cn_v.extent(0)=%zu, d_dc6_v.extent(0)=%zu\n", 
-           d_cn_v.extent(0), d_dc6_v.extent(0));
-  }
-
-  // Add early return if no atoms to process
-  if (inum == 0 || nlocal == 0) {
-    if (lmp->comm->me == 0) {
-      printf("DEBUG: Early return - inum=%d, nlocal=%d\n", inum, nlocal);
-    }
-    return;
-  }*/
   copymode = 1;
   // Zero out dc6 and cn
   if (newton_pair)
@@ -454,22 +421,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   special_lj[3] = force->special_lj[3];
 
   ev_init(eflag, vflag); 
-
-  #ifdef D3_KK_DEBUG
-  atomKK->sync(Host, F_MASK);
-  double pre_sum = 0.0;
-  for (int i=0;i<atomKK->nlocal;i++) {
-    pre_sum += fabs(atom->f[i][0]) + fabs(atom->f[i][1]) + fabs(atom->f[i][2]);
-    if (i < 2) {
-      printf("D3KK DEBUG pre i=%d f=(%.6e %.6e %.6e) step=%lld call=%d\n",
-             i, atom->f[i][0], atom->f[i][1], atom->f[i][2],
-             (long long)update->ntimestep, calls_this_step);
-    }
-  }
-  printf("D3KK DEBUG pre Stage0 sumF=%.6e step=%lld call=%d\n",
-         pre_sum, (long long)update->ntimestep, calls_this_step);
-  #endif
-
  
   calc_coordination_numbersKK();
  
@@ -503,88 +454,8 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   
   d_cutsq_v = k_cutsq_v.template view<DeviceType>();
   
-  #ifdef D3_KK_DEBUG
-  {
-    double h_min_cutsq=1e300, h_max_cutsq=-1e300;
-    auto d_cutsq = d_cutsq_v;
-    Kokkos::parallel_reduce("cutsq_min",
-      Kokkos::RangePolicy<DeviceType>(1, atom->ntypes+1),
-      KOKKOS_LAMBDA(const int i, double &loc_min){
-        for (int j=1;j<=d_cutsq.extent(1)-1;j++){
-          double v = d_cutsq(i,j);
-          if (v>0.0 && v < loc_min) loc_min = v;
-        }
-      }, Kokkos::Min<double>(h_min_cutsq));
-    Kokkos::parallel_reduce("cutsq_max",
-      Kokkos::RangePolicy<DeviceType>(1, atom->ntypes+1),
-      KOKKOS_LAMBDA(const int i, double &loc_max){
-        for (int j=1;j<=d_cutsq.extent(1)-1;j++){
-          double v = d_cutsq(i,j);
-            if (v > loc_max) loc_max = v;
-        }
-      }, Kokkos::Max<double>(h_max_cutsq));
-    Kokkos::fence();
-    if (lmp->comm->me==0) {
-      printf("D3KK DEBUG params s6=%.6g s8=%.6g alpha=%.6g rs6=%.6g rs8=%.6g cutsq[min,max]=[%.6g %.6g] step=%lld\n",
-             s6,s8,alpha,rs6,rs8,h_min_cutsq,h_max_cutsq,(long long)update->ntimestep);
-    }
-  }
-  #endif
  
-  copymode=1;
-  // -------------------------
-  // Stage 1: dE/d(ij) + dc6
-  // -------------------------
-  /*#ifdef D3_KK_DEBUG
-  long long paircount = 0;
-  {
-    auto d_x_local = d_x;
-    auto d_type_local = d_type;
-    auto d_numneigh_local = d_numneigh;
-    auto d_neighbors_local = d_neighbors;
-    auto d_cutsq_local = d_cutsq_v;
-    Kokkos::parallel_reduce("stage1_paircount",
-      Kokkos::RangePolicy<DeviceType>(0, inum),
-      KOKKOS_LAMBDA(const int ii, long long &acc){
-        int i = d_ilist[ii];
-        int itype = d_type_local(i);
-        int jn = d_numneigh_local[i];
-        for (int jj=0;jj<jn;jj++){
-          int jfull = d_neighbors_local(i,jj);
-          int j = jfull & NEIGHMASK;
-          int jtype = d_type_local(j);
-          double dx = d_x_local(i,0)-d_x_local(j,0);
-          double dy = d_x_local(i,1)-d_x_local(j,1);
-            double dz = d_x_local(i,2)-d_x_local(j,2);
-          double rsq = dx*dx+dy*dy+dz*dz;
-          if (rsq < d_cutsq_local(itype,jtype)) acc++;
-        }
-      }, paircount);
-  }
-  Kokkos::fence();
-  #endif */ 
-  
-
-  #ifdef D3_KK_DEBUG
-  Kokkos::fence();
-  double dc6_pre = 0.0;
-  {
-    auto d_dc6_v_local = d_dc6_v;   // copy view into captureable variable
-    Kokkos::parallel_reduce(
-      "dc6_pre",
-      Kokkos::RangePolicy<DeviceType>(0, atomKK->nlocal),
-      KOKKOS_LAMBDA(const int i, double &acc) {
-        acc += fabs(d_dc6_v_local(i));
-      },
-      dc6_pre
-    );
-    Kokkos::fence();
-  }
-  printf("D3KK DEBUG before Stage1 dc6_L1=%.6e step=%lld call=%d\n",
-         dc6_pre, (long long)update->ntimestep, calls_this_step);
-  #endif  
-
-
+  copymode=1; 
   
       // Stage 1: only HALF + NEWTON=1 instantiations needed now
    if (evflag) {
@@ -599,22 +470,8 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
        Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJ<HALF,1,0>>(0, inum),
        *this);
    }
-  
-  #ifdef D3_KK_DEBUG
-  atomKK->sync(Host, F_MASK);
-  double post1_sum=0.0;
-  for (int i=0;i<atomKK->nlocal;i++) {
-    post1_sum += std::fabs(atom->f[i][0]) + std::fabs(atom->f[i][1]) + std::fabs(atom->f[i][2]);
-  }
-  printf("D3KK DEBUG after Stage1 sumF=%.6e step=%lld call=%d\n",
-         post1_sum, (long long)update->ntimestep, calls_this_step);
-  #endif
-   
-
-  
+    
    atomKK->modified(execution_space, F_MASK); 
-   //Kokkos::fence();
-   // Inter-stage comm: reverse then forward for dc6
    communicationStage = 2;
    k_dc6_v.template modify<DeviceType>();
    comm->reverse_comm(this);
@@ -625,26 +482,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
    k_dc6_v.template sync<DeviceType>();
    
    atomKK->sync(execution_space, F_MASK);
-
-   #ifdef D3_KK_DEBUG
-   Kokkos::fence();
-   double dc6_post = 0.0;
-   {
-     auto d_dc6_v_local = d_dc6_v;
-     Kokkos::parallel_reduce(
-       "dc6_post",
-       Kokkos::RangePolicy<DeviceType>(0, atomKK->nlocal),
-       KOKKOS_LAMBDA(const int i, double &acc) {
-         acc += fabs(d_dc6_v_local(i));
-       },
-       dc6_post
-     );
-     Kokkos::fence();
-   }
-   printf("D3KK DEBUG after dc6 comm L1=%.6e step=%lld call=%d\n",
-          dc6_post, (long long)update->ntimestep, calls_this_step);
-   #endif
-
     
     // Stage 2
    if (vflag) {
@@ -659,15 +496,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
        Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF,1,0>>(0, inum),
        *this);
    }
-   #ifdef D3_KK_DEBUG
-   atomKK->sync(Host, F_MASK);
-   double post2_sum=0.0;
-   for (int i=0;i<atomKK->nlocal;i++) {
-     post2_sum += std::fabs(atom->f[i][0]) + std::fabs(atom->f[i][1]) + std::fabs(atom->f[i][2]);
-   }
-   printf("D3KK DEBUG after Stage2 sumF=%.6e step=%lld call=%d\n",
-          post2_sum, (long long)update->ntimestep, calls_this_step);
-   #endif    
 
 /*
 
