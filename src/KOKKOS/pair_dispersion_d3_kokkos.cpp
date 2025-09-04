@@ -252,7 +252,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   special_lj[2] = force->special_lj[2];
   special_lj[3] = force->special_lj[3];
   
-  nmax = atomKK->nmax;
+  //nmax = atomKK->nmax;
   if (eflag_atom)
   {
     memoryKK->destroy_kokkos(k_eatom, eatom);
