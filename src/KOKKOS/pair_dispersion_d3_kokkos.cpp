@@ -281,6 +281,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 
   d_cn_v  = k_cn_v.view<DeviceType>();
   d_dc6_v = k_dc6_v.view<DeviceType>();
+  d_cutsq_v = k_cutsq_v.view<DeviceType>();
 
   d_x    = atomKK->k_x.view<DeviceType>();
   d_f    = atomKK->k_f.view<DeviceType>();
@@ -402,6 +403,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3KokkosCNDC6Kernel<
   if (ii >= inum) return;    
   const int     i      = d_ilist[ii];
   const int     itype  = d_type(i);
+  if (itype <= 0 || itype >= d_rcov_v.extent(0)) return; 
   const int     jnum   = d_numneigh[i];
   const F_FLOAT xi     = d_x(i,0);
   const F_FLOAT yi     = d_x(i,1);
@@ -411,6 +413,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3KokkosCNDC6Kernel<
   {
     int j                = d_neighbors(i, jj) & NEIGHMASK; 
     const int     jtype  = d_type(j); 
+    if (jtype <= 0 || jtype >= d_rcov_v.extent(0)) continue;
     const F_FLOAT xj     = d_x(j,0);
     const F_FLOAT yj     = d_x(j,1);
     const F_FLOAT zj     = d_x(j,2);
@@ -918,9 +921,13 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZ<NEIGHFL
       const double fpair1 = dcn * (d_dc6_v(i) + d_dc6_v(j)) / r ; 
       const double fpair  = fpair1*factor_lj;
      
-      fix += dx * fpair;
-      fiy += dy * fpair;
-      fiz += dz * fpair;
+      const double fx = dx * fpair;
+      const double fy = dy * fpair; 
+      const double fz = dz * fpair;
+    
+      fix += fx;
+      fiy += fy;
+      fiz += fz;
 
       if (NEWTON_PAIR || j < nlocal) {
         a_f_scv(j,0) -= fix;
