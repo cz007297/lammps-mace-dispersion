@@ -30,10 +30,21 @@ struct TagPairDD3UnpackReverseCommDC6{};
 
 // Computation tags
 struct TagPairDD3KokkosCNDC6Initialise{};
-struct TagPairDD3KokkosCNDC6Calc{};
+//struct TagPairDD3KokkosCNDC6Calc{};
+template<int NEIGHFLAG>
+struct TagPairDD3KokkosCNDC6Kernel{};
 
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
-struct TagPairDispDD3dEdIJ{};
+struct TagPairDispDD3dEdIJOriginalZeroDamping{};
+
+template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
+struct TagPairDispDD3dEdIJModifiedZeroDamping{};
+
+template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
+struct TagPairDispDD3dEdIJOriginalBJDamping{};
+
+template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
+struct TagPairDispDD3dEdIJModifiedBJDamping{};
 
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
 struct TagPairDispDD3dEdXYZ{};
@@ -59,12 +70,36 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     // Main computation operators
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDispDD3dEdIJ<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii, EV_FLOAT& ev) const; 
+    void operator()(TagPairDispDD3dEdIJOriginalZeroDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii, EV_FLOAT& ev) const; 
 
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDispDD3dEdIJ<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii) const; 
+    void operator()(TagPairDispDD3dEdIJOriginalZeroDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii) const; 
 
+    template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
+    KOKKOS_INLINE_FUNCTION
+    void operator()(TagPairDispDD3dEdIJModifiedZeroDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii, EV_FLOAT& ev) const; 
+
+    template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
+    KOKKOS_INLINE_FUNCTION
+    void operator()(TagPairDispDD3dEdIJModifiedZeroDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii) const; 
+    
+    template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
+    KOKKOS_INLINE_FUNCTION
+    void operator()(TagPairDispDD3dEdIJOriginalBJDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii, EV_FLOAT& ev) const; 
+
+    template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
+    KOKKOS_INLINE_FUNCTION
+    void operator()(TagPairDispDD3dEdIJOriginalBJDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii) const; 
+    
+    template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
+    KOKKOS_INLINE_FUNCTION
+    void operator()(TagPairDispDD3dEdIJModifiedBJDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii, EV_FLOAT& ev) const; 
+
+    template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
+    KOKKOS_INLINE_FUNCTION
+    void operator()(TagPairDispDD3dEdIJModifiedBJDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii) const; 
+    
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
     void operator()(TagPairDispDD3dEdXYZ<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int& ii, EV_FLOAT& ev) const; 
@@ -76,13 +111,14 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     // Coordination number calculation operators
     KOKKOS_INLINE_FUNCTION
     void operator()(TagPairDD3KokkosCNDC6Initialise, const int &i) const;
-    
+   
+    template<int NEIGHFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDD3KokkosCNDC6Calc, const int &ii) const;
+    void operator()(TagPairDD3KokkosCNDC6Kernel<NEIGHFLAG>, const int &ii) const;
   
     // C6 coefficient calculation
     KOKKOS_INLINE_FUNCTION
-    void get_dC6KK(int itype, int jtype,
+    void dC6KK(int itype, int jtype,
                    double cni, double cnj, 
                    double &C6, double &dC6_i, double &dC6_j) const;
     
@@ -185,7 +221,7 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     using DupScatterView = KKScatterView<DataType, Layout, KKDeviceType, KKScatterSum, KKScatterDuplicated>;
     
     template<typename DataType, typename Layout> 
-    using ScatterView    = KKScatterView<DataType, Layout, KKDeviceType, KKScatterSum, KKScatterNonDuplicated>;
+    using NonDupScatterView = KKScatterView<DataType, Layout, KKDeviceType, KKScatterSum, KKScatterNonDuplicated>;
 
   
     DupScatterView<F_FLOAT*, typename DAT::tdual_float_1d::array_layout>         dup_cn;
@@ -199,7 +235,9 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     NonDupScatterView<F_FLOAT*[3], typename DAT::t_f_array::array_layout>        ndup_f;
     NonDupScatterView<E_FLOAT*, typename DAT::t_efloat_1d::array_layout>         ndup_eatom;
     NonDupScatterView<F_FLOAT*[6], typename DAT::t_virial_array::array_layout>   ndup_vatom;
-
+    
+    template<class TAG>
+    struct policyInstance;
 
 
 };
