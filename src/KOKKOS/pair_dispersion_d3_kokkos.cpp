@@ -247,6 +247,12 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   
   ev_init(eflag, vflag);
   
+  // FIRST SYNC AFTER EV_INIT
+  atomKK->sync(execution_space, datamask_read);
+  if (eflag || vflag ) atomKK->modified(execution_space, datamask_modify);
+  else atomKK->modified(execution_space, F_MASK);
+
+ 
   special_lj[0] = force->special_lj[0];
   special_lj[1] = force->special_lj[1];
   special_lj[2] = force->special_lj[2];
@@ -265,12 +271,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     memoryKK->create_kokkos(k_vatom, vatom, nmax, "pair:vatom");
     d_vatom = k_vatom.view<DeviceType>();
   }
-
-  // FIRST SYNC AFTER EV_INIT
-
-  atomKK->sync(execution_space, datamask_read);
-  if (eflag || vflag ) atomKK->modified(execution_space, datamask_modify);
-  else atomKK->modified(execution_space, F_MASK); 
 
   if (atom->nmax > nmax)
   {
@@ -313,6 +313,8 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 
   Kokkos::parallel_for(policyInstance<TagPairDD3KokkosCNDC6Kernel<HALF>>::get(inum), *this); 
 
+
+   communicationStage = 1;
   // Communicated calculated kernel
   if (newton_pair) 
     {
@@ -930,9 +932,9 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZ<NEIGHFL
       fiz += fz;
 
       if (NEWTON_PAIR || j < nlocal) {
-        a_f_scv(j,0) -= fix;
-        a_f_scv(j,1) -= fiy;
-        a_f_scv(j,2) -= fiz;
+        a_f_scv(j,0) -= fx;
+        a_f_scv(j,1) -= fy;
+        a_f_scv(j,2) -= fz;
       }
 
       if (EVFLAG) {this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, 0.0, fpair, dx, dy, dz);} 
