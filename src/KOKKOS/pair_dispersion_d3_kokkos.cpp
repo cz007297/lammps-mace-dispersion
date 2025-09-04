@@ -279,6 +279,8 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     memoryKK->grow_kokkos(k_dc6_v, dc6, nmax, "pair:dc6");
   }
 
+  d_cn_v  = k_cn_v.view<DeviceType>();
+  d_dc6_v = k_dc6_v.view<DeviceType>();
 
   d_x    = atomKK->k_x.view<DeviceType>();
   d_f    = atomKK->k_f.view<DeviceType>();
@@ -1334,6 +1336,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double factor_lj = special_lj[sbmask_disp(jfull)];
     const int j = jfull & NEIGHMASK;
     const int jtype = d_type(j);
+    if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue; 
 
     const double dx  = xi - d_x(j,0);
     const double dy  = yi - d_x(j,1);
@@ -1386,14 +1389,18 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     if (NEWTON_PAIR || j < nlocal)
       a_dc6_scv(j) += rest*dC6_j;
 
-    fix += dx * fpair;
-    fiy += dy * fpair;
-    fiz += dz * fpair;
+    const double fx = dx * fpair;
+    const double fy = dy * fpair;
+    const double fz = dz * fpair;
+    
+    fix += fx;
+    fiy += fy;
+    fiz += fz; 
 
     if (NEWTON_PAIR || j < nlocal) {
-      a_f_scv(j,0) -= fix;
-      a_f_scv(j,1) -= fiy;
-      a_f_scv(j,2) -= fiz;
+      a_f_scv(j,0) -= fx;
+      a_f_scv(j,1) -= fy;
+      a_f_scv(j,2) -= fz;
     }
 
     if (EVFLAG) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
