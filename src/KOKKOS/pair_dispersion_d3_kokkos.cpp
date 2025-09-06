@@ -256,7 +256,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   // FIRST SYNC AFTER EV_INIT
   atomKK->sync(execution_space, datamask_read);
   if (eflag || vflag ) atomKK->modified(execution_space, datamask_modify);
-  else atomKK->modified(execution_space, F_MASK);
+  else                 atomKK->modified(execution_space, F_MASK);
 
  
   special_lj[0] = force->special_lj[0];
@@ -264,25 +264,31 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   special_lj[2] = force->special_lj[2];
   special_lj[3] = force->special_lj[3];
   
+  // Ensure per-atom capacity first
+  const int req_nmax = atom->nmax;
+  if (!k_cn_v.span() || !k_dc6_v.span() || req_nmax > nmax) {
+    nmax = req_nmax;
+    memoryKK->grow_kokkos(k_cn_v,  cn,  nmax, "pair:cn");
+    memoryKK->grow_kokkos(k_dc6_v, dc6, nmax, "pair:dc6");
+  }
+
   //nmax = atomKK->nmax;
   if (eflag_atom)
   {
-    memoryKK->destroy_kokkos(k_eatom, eatom);
-    memoryKK->create_kokkos(k_eatom, eatom, nmax, "pair:eatom");
+    if (!k_eatom.span() || k_eatom.extent(0) < nmax) 
+    {
+      memoryKK->destroy_kokkos(k_eatom, eatom);
+      memoryKK->create_kokkos(k_eatom, eatom, nmax, "pair:eatom");
+    }
     d_eatom = k_eatom.view<DeviceType>();  
   }
   if (vflag_atom)
-  {
-    memoryKK->destroy_kokkos(k_vatom, vatom);
-    memoryKK->create_kokkos(k_vatom, vatom, nmax, "pair:vatom");
+    if (!k_vatom.span() || k_vatom.extent(0) < nmax) 
+    {
+      memoryKK->destroy_kokkos(k_vatom, vatom);
+      memoryKK->create_kokkos(k_vatom, vatom, nmax, "pair:vatom");
+    }
     d_vatom = k_vatom.view<DeviceType>();
-  }
-
-  if (atom->nmax > nmax)
-  {
-    nmax = atom-> nmax; 
-    memoryKK->grow_kokkos(k_cn_v,  cn,  nmax, "pair:cn");
-    memoryKK->grow_kokkos(k_dc6_v, dc6, nmax, "pair:dc6");
   }
 
   d_cn_v  = k_cn_v.view<DeviceType>();
@@ -303,11 +309,16 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   d_ilist      =  k_list->d_ilist;
   inum = list->inum;
 
+  k_cn_v.template sync<DeviceType>();
+  k_dc6_v.template sync<DeviceType>();
+  k_cn_v.template modify<DeviceType>();
+  k_dc6_v.template modify<DeviceType>();
+
   ndup_cn    =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_cn_v);
   ndup_dc6   =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_dc6_v);
   ndup_f     =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_f);
-  ndup_eatom =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_eatom);
-  ndup_vatom =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_vatom);
+  if (eflag_atom) ndup_eatom =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_eatom);
+  if (vflag_atom) ndup_vatom =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_vatom);
 
   copymode = 1; 
 
@@ -1677,8 +1688,8 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double e8     = C8/t8;
 
 
-    const double tmp6   = 6.0 * s6 * C6 * r4 * (t6*t6);
-    const double tmp8   = 8.0 * s8 * C8 * r6 * (t8*t8);
+    const double tmp6   = (6.0 * s6 * C6 * r4) / (t6*t6);
+    const double tmp8   = (8.0 * s8 * C8 * r6) / (t8*t8);
 
     const double fpairsum = -(tmp6 + tmp8);
     const double fpair    = fpairsum * factor_lj;
@@ -1691,14 +1702,15 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     if (NEWTON_PAIR || j < nlocal)
       a_dc6_scv(j) += rest*dC6_j;
 
-    fix += dx * fpair;
-    fiy += dy * fpair;
-    fiz += dz * fpair;
+    const double fx = dx * fpair;
+    const double fy = dy * fpair;
+    const double fz = dz * fpair;
 
+    fix += fx; fiy += fy; fiz += fz;
     if (NEWTON_PAIR || j < nlocal) {
-      a_f_scv(j,0) -= fix;
-      a_f_scv(j,1) -= fiy;
-      a_f_scv(j,2) -= fiz;
+      a_f_scv(j,0) -= fx;
+      a_f_scv(j,1) -= fy;
+      a_f_scv(j,2) -= fz;
     }
 
     if (EVFLAG) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
@@ -1796,8 +1808,8 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double e8     = C8/t8;
 
 
-    const double tmp6   = 6.0 * s6 * C6 * r4 * (t6*t6);
-    const double tmp8   = 8.0 * s8 * C8 * r6 * (t8*t8);
+    const double tmp6   = (6.0 * s6 * C6 * r4) / (t6*t6);
+    const double tmp8   = (8.0 * s8 * C8 * r6) / (t8*t8);
 
     const double fpairsum = -(tmp6 + tmp8);
     const double fpair    = fpairsum * factor_lj;
@@ -1810,14 +1822,15 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     if (NEWTON_PAIR || j < nlocal)
       a_dc6_scv(j) += rest*dC6_j;
 
-    fix += dx * fpair;
-    fiy += dy * fpair;
-    fiz += dz * fpair;
+    const double fx += dx * fpair;
+    const double fy += dy * fpair;
+    const double fz += dz * fpair;
 
+    fix += fx; fiy += fy; fiz += fz;
     if (NEWTON_PAIR || j < nlocal) {
-      a_f_scv(j,0) -= fix;
-      a_f_scv(j,1) -= fiy;
-      a_f_scv(j,2) -= fiz;
+      a_f_scv(j,0) -= fx;
+      a_f_scv(j,1) -= fy;
+      a_f_scv(j,2) -= fz;
     }
 
     if (EVFLAG) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
