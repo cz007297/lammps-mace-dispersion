@@ -29,7 +29,7 @@
 #include "memory.h"
 #include "neigh_list.h"
 #include "neighbor.h"
-
+#include "update.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -84,6 +84,7 @@ PairDispersionD3::PairDispersionD3(LAMMPS *lmp) :
 
 PairDispersionD3::~PairDispersionD3()
 {
+  if (copymode) return ;
   if (allocated) {
     memory->destroy(setflag);
     memory->destroy(cutsq);
@@ -452,12 +453,12 @@ void PairDispersionD3::compute(int eflag, int vflag)
 {
 
   std::unordered_map<std::string, int> dampingMap = {
-      {"zero", 1}, {"zerom", 2}, {"bj", 3}, {"bjm", 4}};
+      {"original", 1}, {"zerom", 2}, {"bj", 3}, {"bjm", 4}};
   int dampingCode = dampingMap[damping_type];
 
   double evdwl = 0.0;
   ev_init(eflag, vflag);
-
+  
   calc_coordination_number();
 
   double **x = atom->x;
@@ -695,7 +696,7 @@ void PairDispersionD3::set_funcpar(std::string &functional_name)
 {
 
   std::unordered_map<std::string, int> dampingMap = {
-      {"zero", 1}, {"zerom", 2}, {"bj", 3}, {"bjm", 4}};
+      {"original", 1}, {"zerom", 2}, {"bj", 3}, {"bjm", 4}};
 
   int dampingCode = dampingMap[damping_type];
 
