@@ -283,6 +283,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     d_eatom = k_eatom.view<DeviceType>();  
   }
   if (vflag_atom)
+  {
     if (!k_vatom.span() || k_vatom.extent(0) < nmax) 
     {
       memoryKK->destroy_kokkos(k_vatom, vatom);
@@ -1555,7 +1556,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
 
     const double C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
 
-    const double r0     = r / d_r0ab_v(itype, jtype);
+    const double r0     = d_r0ab_v(itype, jtype);
     const double alpha6 = alpha;
     const double alpha8 = alpha + 2.0;
 
@@ -1586,14 +1587,15 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     if (NEWTON_PAIR || j < nlocal)
       a_dc6_scv(j) += rest*dC6_j;
 
-    fix += dx * fpair;
-    fiy += dy * fpair;
-    fiz += dz * fpair;
+    const double fx = dx * fpair;
+    const double fy = dy * fpair;
+    const double fz = dz * fpair;
 
+    fix += fx; fiy += fy; fiz += fz; 
     if (NEWTON_PAIR || j < nlocal) {
-      a_f_scv(j,0) -= fix;
-      a_f_scv(j,1) -= fiy;
-      a_f_scv(j,2) -= fiz;
+      a_f_scv(j,0) -= fx;
+      a_f_scv(j,1) -= fy;
+      a_f_scv(j,2) -= fz;
     }
 
     if (EVFLAG) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
@@ -1678,9 +1680,9 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double r8     = rsq*rsq*rsq*rsq;
 
     // ip - inner product 
-    const double iptmp  = (a1*r0+a2);
-    const double expt6  = iptmp*iptmp*iptmp;
-    const double expt8  = iptmp*iptmp*iptmp*iptmp;
+    const double iptmp  = ((a1*r0)+a2);
+    const double expt6  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
+    const double expt8  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
     const double t6     = r6 + expt6 ;
     const double t8     = r8 + expt8 ; 
 
@@ -1799,8 +1801,8 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
 
     // ip - inner product 
     const double iptmp  = (a1*r0+a2);
-    const double expt6  = iptmp*iptmp*iptmp;
-    const double expt8  = iptmp*iptmp*iptmp*iptmp;
+    const double expt6  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
+    const double expt8  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
     const double t6     = r6 + expt6 ;
     const double t8     = r8 + expt8 ; 
 
@@ -1822,9 +1824,9 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     if (NEWTON_PAIR || j < nlocal)
       a_dc6_scv(j) += rest*dC6_j;
 
-    const double fx += dx * fpair;
-    const double fy += dy * fpair;
-    const double fz += dz * fpair;
+    const double fx = dx * fpair;
+    const double fy = dy * fpair;
+    const double fz = dz * fpair;
 
     fix += fx; fiy += fy; fiz += fz;
     if (NEWTON_PAIR || j < nlocal) {
