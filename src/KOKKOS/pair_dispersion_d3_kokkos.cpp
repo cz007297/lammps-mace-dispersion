@@ -242,6 +242,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3KokkosCNDC6Initial
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 {
+
+  std::unordered_map<std::string, int> dampingMap = {
+      {"original", 1}, {"zerom", 2}, {"bj", 3}, {"bjm",4}};
+  int dampingCode = dampingMap[damping_type];
+  
+ 
   int eflag = eflag_in;
   int vflag = vflag_in;
   
@@ -297,8 +303,8 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   d_ilist      =  k_list->d_ilist;
   inum = list->inum;
 
-  ndup_cn    = Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_cn_v);
-  ndup_dc6   = Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_dc6_v);
+  ndup_cn    =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_cn_v);
+  ndup_dc6   =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_dc6_v);
   ndup_f     =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_f);
   ndup_eatom =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_eatom);
   ndup_vatom =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_vatom);
@@ -332,21 +338,73 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 
   // Start Calculating MAIN kernels 
   // compute kernel 1
-  if (evflag)
-  {
-    EV_FLOAT ev;
-    Kokkos::parallel_reduce(
-      Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJOriginalZeroDamping<HALF, 1, 1>>(0, inum),
-      *this, ev);
-    if (eflag_global) eng_vdwl += ev.evdwl;
-    if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
+  switch (dampingCode) {
+    case 1: { 
+      if (evflag)
+      {
+        EV_FLOAT ev;
+        Kokkos::parallel_reduce(
+          Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJOriginalZeroDamping<HALF, 1, 1>>(0, inum),
+          *this, ev);
+        if (eflag_global) eng_vdwl += ev.evdwl;
+        if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
+      }
+      else
+      {
+        Kokkos::parallel_for(
+          policyInstance<TagPairDispDD3dEdIJOriginalZeroDamping<HALF, 1, 0>>::get(inum), *this);
+      }
+     } break;
+    case 2: { 
+      if (evflag)
+      {
+        EV_FLOAT ev;
+        Kokkos::parallel_reduce(
+          Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJModifiedZeroDamping<HALF, 1, 1>>(0, inum),
+          *this, ev);
+        if (eflag_global) eng_vdwl += ev.evdwl;
+        if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
+      }
+      else
+      {
+        Kokkos::parallel_for(
+          policyInstance<TagPairDispDD3dEdIJModifiedZeroDamping<HALF, 1, 0>>::get(inum), *this);
+      }
+     } break;
+    case 3: { 
+      if (evflag)
+      {
+        EV_FLOAT ev;
+        Kokkos::parallel_reduce(
+          Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJOriginalBJDamping<HALF, 1, 1>>(0, inum),
+          *this, ev);
+        if (eflag_global) eng_vdwl += ev.evdwl;
+        if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
+      }
+      else
+      {
+        Kokkos::parallel_for(
+          policyInstance<TagPairDispDD3dEdIJOriginalBJDamping<HALF, 1, 0>>::get(inum), *this);
+      }
+     } break;
+    case 4: { 
+      if (evflag)
+      {
+        EV_FLOAT ev;
+        Kokkos::parallel_reduce(
+          Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJModifiedBJDamping<HALF, 1, 1>>(0, inum),
+          *this, ev);
+        if (eflag_global) eng_vdwl += ev.evdwl;
+        if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
+      }
+      else
+      {
+        Kokkos::parallel_for(
+          policyInstance<TagPairDispDD3dEdIJModifiedBJDamping<HALF, 1, 0>>::get(inum), *this);
+      }
+     } break;
+    
   }
-  else
-  {
-    Kokkos::parallel_for(
-      policyInstance<TagPairDispDD3dEdIJOriginalZeroDamping<HALF, 1, 0>>::get(inum), *this);
-  }
-  
   atomKK->modified(execution_space, F_MASK);
   communicationStage = 2;
   if (newton_pair) 
@@ -1461,6 +1519,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double factor_lj = special_lj[sbmask_disp(jfull)];
     const int j = jfull & NEIGHMASK;
     const int jtype = d_type(j);
+    if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue;
 
     const double dx  = xi - d_x(j,0);
     const double dy  = yi - d_x(j,1);
@@ -1577,6 +1636,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double factor_lj = special_lj[sbmask_disp(jfull)];
     const int j = jfull & NEIGHMASK;
     const int jtype = d_type(j);
+    if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue;
 
     const double dx  = xi - d_x(j,0);
     const double dy  = yi - d_x(j,1);
@@ -1586,11 +1646,11 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     if (rsq >= d_cutsq_v(itype,jtype)) continue;
 
     const double r      = sqrt(rsq);
-    const double r2inv  = 1.0 / rsq;
-    const double r4inv  = r2inv * r2inv;
-    const double r6inv  = r4inv * r2inv;
-    const double r8inv  = r6inv * r2inv;
-    const double r10inv = r8inv * r2inv;
+    //const double r2inv  = 1.0 / rsq;
+    //const double r4inv  = r2inv * r2inv;
+    //const double r6inv  = r4inv * r2inv;
+    //const double r8inv  = r6inv * r2inv;
+    //const double r10inv = r8inv * r2inv;
 
     const double cni = d_cn_v(i);
     const double cnj = d_cn_v(j);
@@ -1695,6 +1755,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double factor_lj = special_lj[sbmask_disp(jfull)];
     const int j = jfull & NEIGHMASK;
     const int jtype = d_type(j);
+    if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue;
 
     const double dx  = xi - d_x(j,0);
     const double dy  = yi - d_x(j,1);
@@ -1704,11 +1765,11 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     if (rsq >= d_cutsq_v(itype,jtype)) continue;
 
     const double r      = sqrt(rsq);
-    const double r2inv  = 1.0 / rsq;
-    const double r4inv  = r2inv * r2inv;
-    const double r6inv  = r4inv * r2inv;
-    const double r8inv  = r6inv * r2inv;
-    const double r10inv = r8inv * r2inv;
+    //const double r2inv  = 1.0 / rsq;
+    //const double r4inv  = r2inv * r2inv;
+    //const double r6inv  = r4inv * r2inv;
+    //const double r8inv  = r6inv * r2inv;
+    //const double r10inv = r8inv * r2inv;
 
     const double cni = d_cn_v(i);
     const double cnj = d_cn_v(j);
