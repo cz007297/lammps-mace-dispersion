@@ -36,9 +36,8 @@ PairDispersionD3Kokkos<DeviceType>::PairDispersionD3Kokkos(LAMMPS *lmp) : PairDi
 {
   kokkosable = 1;
   atomKK = (AtomKokkos *) atom;
-  execution_space = ExecutionSpaceFromDevice<DeviceType>::space;
-  datamask_read = X_MASK | TAG_MASK | TYPE_MASK | ENERGY_MASK | VIRIAL_MASK;
-  //datamask_read = X_MASK | F_MASK | TAG_MASK | TYPE_MASK | ENERGY_MASK | VIRIAL_MASK;
+  execution_space = ExecutionSpaceFromDevice<DeviceType>::space; 
+  datamask_read = X_MASK | F_MASK | TAG_MASK | TYPE_MASK | ENERGY_MASK | VIRIAL_MASK;
   datamask_modify = F_MASK | ENERGY_MASK | VIRIAL_MASK;
   nmax = 0; 
 }
@@ -65,7 +64,94 @@ PairDispersionD3Kokkos<DeviceType>::~PairDispersionD3Kokkos()
   allocated = 0;
 }
 
+// ...existing code...
+template<class DeviceType>
+double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j)
+{
+  // Let base class do mixing / set r0ab, cutsq, etc. for (i,j)
+  double cut = PairDispersionD3::init_one(i,j);
 
+  const int ntypes = atom->ntypes;
+
+  // Allocate DualViews once (first call)
+  if (!k_r0ab_v.span()) {
+    k_mxci_v  = DAT::tdual_float_1d("k_mxci", ntypes+1);
+    k_r2r4_v  = DAT::tdual_float_1d("k_r2r4", ntypes+1);
+    k_rcov_v  = DAT::tdual_float_1d("k_rcov", ntypes+1);
+    k_r0ab_v  = DAT::tdual_float_2d("k_r0ab", ntypes+1, ntypes+1);
+    k_cutsq_v = DAT::tdual_float_2d("k_cutsq", ntypes+1, ntypes+1);
+
+    // Inner grid dims are fixed to 5x5x3 in this build
+    k_c6ab_v  = tdual_float_5d("k_c6ab", ntypes+1, ntypes+1, 5, 5, 3);
+
+    // Fill 1D arrays (type properties) once on host
+    for (int t = 0; t <= ntypes; ++t) {
+      k_mxci_v.h_view(t)  = mxci[t];
+      k_r2r4_v.h_view(t)  = r2r4[t];
+      k_rcov_v.h_view(t)  = rcov[t];
+    }
+  }
+
+  // For this (i,j) we can fill r0ab and cutsq immediately
+  // r0ab comes from base; cutsq is derived from cut for this pair
+  k_r0ab_v.h_view(i,j) = r0ab[i][j];
+  k_r0ab_v.h_view(j,i) = r0ab[j][i];
+
+  const float cutsq_local = static_cast<float>(cut * cut);
+  k_cutsq_v.h_view(i,j) = cutsq_local;
+  k_cutsq_v.h_view(j,i) = cutsq_local;
+
+  // If this is the last init_one call, populate the FULL tables and sync once
+  if (i == ntypes && j == ntypes) {
+    // Fill all r0ab and cutsq from the base class arrays for every (t1,t2)
+    for (int t1 = 1; t1 <= ntypes; ++t1) {
+      for (int t2 = 1; t2 <= ntypes; ++t2) {
+        k_r0ab_v.h_view(t1,t2) = r0ab[t1][t2];
+
+        // Use the base Pair::cutsq if available (it has been set across init_one calls)
+        // Fallback to previous value if uninitialized.
+        const F_FLOAT csq = this->cutsq ? this->cutsq[t1][t2] : static_cast<double>(k_cutsq_v.h_view(t1,t2));
+        k_cutsq_v.h_view(t1,t2) = static_cast<float>(csq);
+
+        // Copy the C6 grid block for this (t1,t2)
+        const int Gi = std::min<int>(mxci[t1] + 1, k_c6ab_v.extent(2)); // cap by 5
+        const int Gj = std::min<int>(mxci[t2] + 1, k_c6ab_v.extent(3)); // cap by 5
+        for (int gi = 0; gi < Gi; ++gi) {
+          for (int gj = 0; gj < Gj; ++gj) {
+            // channels: 0=c6_ref (in a.u.), 1=cni_ref, 2=cnj_ref
+            k_c6ab_v.h_view(t1,t2,gi,gj,0) = c6ab[t1][t2][gi][gj][0];
+            k_c6ab_v.h_view(t1,t2,gi,gj,1) = c6ab[t1][t2][gi][gj][1];
+            k_c6ab_v.h_view(t1,t2,gi,gj,2) = c6ab[t1][t2][gi][gj][2];
+
+            // Ensure symmetric block is present too (swap gi/gj when swapping t1/t2)
+            k_c6ab_v.h_view(t2,t1,gj,gi,0) = c6ab[t2][t1][gj][gi][0];
+            k_c6ab_v.h_view(t2,t1,gj,gi,1) = c6ab[t2][t1][gj][gi][1];
+            k_c6ab_v.h_view(t2,t1,gj,gi,2) = c6ab[t2][t1][gj][gi][2];
+          }
+        }
+      }
+    }
+
+    // Push all host mirrors to device once
+    k_mxci_v.modify_host();   k_mxci_v.template sync<DeviceType>();
+    k_r2r4_v.modify_host();   k_r2r4_v.template sync<DeviceType>();
+    k_rcov_v.modify_host();   k_rcov_v.template sync<DeviceType>();
+    k_r0ab_v.modify_host();   k_r0ab_v.template sync<DeviceType>();
+    k_cutsq_v.modify_host();  k_cutsq_v.template sync<DeviceType>();
+    k_c6ab_v.modify_host();   k_c6ab_v.template sync<DeviceType>();
+
+    // Bind device views for kernels
+    d_mxci_v  = k_mxci_v.template view<DeviceType>();
+    d_r2r4_v  = k_r2r4_v.template view<DeviceType>();
+    d_rcov_v  = k_rcov_v.template view<DeviceType>();
+    d_r0ab_v  = k_r0ab_v.template view<DeviceType>();
+    d_cutsq_v = k_cutsq_v.template view<DeviceType>();
+    d_c6ab_v  = k_c6ab_v.template view<DeviceType>();
+  }
+
+  return cut;
+}
+/*
 template<class DeviceType>
 double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j)
 {
@@ -99,6 +185,11 @@ double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j)
   k_cutsq_v.h_view(i,j) = cutsq_local;
   k_cutsq_v.h_view(j,i) = cutsq_local;
 
+
+  //copy c6ab
+  
+
+
   // C6 tensor (only once per (i,j); ensure symmetry if needed)
   for (int gi=0; gi<5; ++gi)
     for (int gj=0; gj<5; ++gj)
@@ -127,127 +218,32 @@ double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j)
   }
   return cut;
 }
-
+*/
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
 {
- 
   PairDispersionD3::coeff(narg,arg);
-  
-  //free all baseclass
-
-
-
 }
 
 
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::init_style()
 {
-  // Initialize the base class first
   PairDispersionD3::init_style();
 
-  // adjust neighbor list request for KOKKOS
-  //int neighflag = lmp->kokkos->neighflag;
+  // Adjust neighbor list request for KOKKOS
   auto request = neighbor->find_request(this);
-  request->set_kokkos_host(std::is_same_v<DeviceType,LMPHostType> &&
-                           !std::is_same_v<DeviceType,LMPDeviceType>);
+  request->set_kokkos_host(std::is_same_v<DeviceType,LMPHostType> && !std::is_same_v<DeviceType,LMPDeviceType>);
   request->set_kokkos_device(std::is_same_v<DeviceType,LMPDeviceType>);
-  //if (neighflag == FULL) request->enable_full();
-  //neighbor->add_request(this,NeighConst::REQ_DEFAULT);
 }
-
-
-// Rewrite calc_coordination_number into a kernel launched from compute
-// rewrite kernel to only do calc cn with scatter view
-// use deep copy rather than initializing a kernel 
-
-/*
-template<class DeviceType>
-void PairDispersionD3Kokkos<DeviceType>::calc_coordination_numbersKK()
-{
- 
- // atomKK->sync(execution_space,datamask_read);
-
-  // the cn array is duplicated for OpenMP, atomic for GPU, and neither for Serial
-  
-  auto v_cn = ScatterViewHelper<NeedDup_v<NEIGHFLAG, DeviceType>, decltype(dup_cn), decltype(ndup_cn)>::get(dup_cn, ndup_cn);
-  auto a_cn = v_cn.template access<AtomicDup_v<NEIGHFLAG, DeviceType>>();
-
-  d_x           = atomKK->k_x.view<DeviceType>();
-  d_f           = atomKK->k_f.view<DeviceType>();
-  d_type        = atomKK->k_type.view<DeviceType>();
-  nlocal      = atomKK->nlocal;
-  nall        = atomKK->nlocal + atomKK->nghost;
-  newton_pair = force->newton_pair; 
-  NeighListKokkos<DeviceType>* k_list = static_cast<NeighListKokkos<DeviceType>*>(list);
-  d_numneigh = k_list->d_numneigh;
-  d_neighbors = k_list->d_neighbors;
-  d_ilist = k_list->d_ilist;
-  inum = list->inum; 
- 
-  if (atomKK->nmax > nmax)
-  {
-    nmax = atomKK->nmax;
-    memoryKK->grow_kokkos(k_cn_v, cn, nmax, "pair:cn");
-    memoryKK->grow_kokkos(k_dc6_v, dc6, nmax, "pair:dc6");
-    //allocated = 1; 
-  }
-
-  d_cn_v  = k_cn_v.template view<DeviceType>();
-  d_dc6_v = k_dc6_v.template view<DeviceType>();
-  d_mxci_v = k_mxci_v.template view<DeviceType>();
-  d_r2r4_v = k_r2r4_v.template view<DeviceType>();
-  d_rcov_v = k_rcov_v.template view<DeviceType>();
-  d_r0ab_v = k_r0ab_v.template view<DeviceType>();
-  d_c6ab_v = k_c6ab_v.template view<DeviceType>();
-  //d_cutsq_v = k_cutsq_v.template view<DeviceType>(); 
-  copymode = 1;
-  // Zero out dc6 and cn
-  if (newton_pair)
-    Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagPairDD3KokkosCNDC6Initialise>(0, nall), *this);
-  else
-    Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagPairDD3KokkosCNDC6Initialise>(0, nlocal), *this);
-
-  Kokkos::parallel_for(Kokkos::RangePolicy<DeviceType, TagPairDD3KokkosCNDC6Calc>(0, inum), *this);  
- 
-  k_cn_v.template modify<DeviceType>();
-  
-  communicationStage = 1;
-  if (newton_pair) {
-    k_cn_v.template modify<DeviceType>();
-    //k_dc6_v.template modify<DeviceType>();
-    comm->reverse_comm(this);
-    k_cn_v.template sync<DeviceType>();
-    //k_dc6_v.template sync<DeviceType>();
-  }  
-  k_cn_v.template modify<DeviceType>();
-  //k_dc6_v.template modify<DeviceType>();
-  comm->forward_comm(this);
-  k_cn_v.template sync<DeviceType>();
-  //k_dc6_v.template sync<DeviceType>();
-  copymode = 0;
-}
-
-template<class DeviceType>
-KOKKOS_INLINE_FUNCTION
-void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3KokkosCNDC6Initialise, const int &i) const
-{
-  d_cn_v(i)  = 0.0;
-  d_dc6_v(i) = 0.0;
-}
-*/
-
 
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 {
-
   std::unordered_map<std::string, int> dampingMap = {
       {"original", 1}, {"zerom", 2}, {"bj", 3}, {"bjm",4}};
   int dampingCode = dampingMap[damping_type];
   
- 
   int eflag = eflag_in;
   int vflag = vflag_in;
   
@@ -256,7 +252,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   // FIRST SYNC AFTER EV_INIT
   atomKK->sync(execution_space, datamask_read);
   if (eflag || vflag ) atomKK->modified(execution_space, datamask_modify);
-  else                 atomKK->modified(execution_space, F_MASK);
 
  
   special_lj[0] = force->special_lj[0];
@@ -331,8 +326,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 
   Kokkos::parallel_for(policyInstance<TagPairDD3KokkosCNDC6Kernel<HALF>>::get(inum), *this); 
 
-
-   communicationStage = 1;
+  communicationStage = 1;
   // Communicated calculated kernel
   if (newton_pair) 
     {
@@ -347,8 +341,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
      k_cn_v.template sync<DeviceType>();
   }
 
-
-  // Start Calculating MAIN kernels 
+  // Main Kernels Switch Logic Here - NEWTON_PAIR hardcoded to one by design 
   // compute kernel 1
   switch (dampingCode) {
     case 1: { 
@@ -440,8 +433,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     Kokkos::parallel_reduce(
       Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF, 1, 1>>(0, inum),
       *this, ev);
-    //if (eflag_global) eng_vdwl += ev.evdwl;
-    //if (vflag_flobal) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
+    // no energy contributions needed in kernel 2
   }
   else
   {
@@ -455,10 +447,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   copymode = 0;
   if constexpr (!std::is_same_v<DeviceType, LMPHostType>) {
     atomKK->sync(Host, F_MASK);
-  }
-
-
- 
+  } 
 }
 
 
@@ -561,13 +550,13 @@ struct DC6Derive
     c6_ref *= autoev * pow(autoang, 6);
     if (c6_ref <= 0.0) return; 
    
-    const double cni_ref  = d_c6ab_v(iat, jat, ci, cj, 1);
-    const double cnj_ref  = d_c6ab_v(iat, jat, ci, cj, 2);
+    const F_FLOAT  cni_ref  = d_c6ab_v(iat, jat, ci, cj, 1);
+    const F_FLOAT  cnj_ref  = d_c6ab_v(iat, jat, ci, cj, 2);
   
-    const double    dx_i  = cni - cni_ref;
-    const double    dx_j  = cnj - cnj_ref; 
+    const F_FLOAT    dx_i  = cni - cni_ref;
+    const F_FLOAT    dx_j  = cnj - cnj_ref; 
 
-    const double       r  = dx_i*dx_i  + dx_j*dx_j;
+    const F_FLOAT       r  = dx_i*dx_i  + dx_j*dx_j;
   
     if ( r < acc.r_save) { acc.r_save = r; acc.c6mem = c6_ref; }
   
@@ -576,8 +565,8 @@ struct DC6Derive
     acc.den              += expterm;
 
     expterm              *= 2.0 * K3;
-    const double  term_i  = expterm * dx_i;
-    const double  term_j  = expterm * dx_j;
+    const F_FLOAT  term_i  = expterm * dx_i;
+    const F_FLOAT  term_j  = expterm * dx_j;
     acc.dnum_i           += c6_ref * term_i;
     acc.dden_i           += term_i;
     acc.dnum_j           += c6_ref * term_j;
@@ -593,7 +582,6 @@ void operator+=(DC6Derive &lhs, const DC6Derive &rhs)
   DC6Derive::join(lhs, rhs);
 }
 
-// Added back: special-bits mask helper previously removed
 KOKKOS_INLINE_FUNCTION
 static int sbmask_disp(const int jfull) {
   return (jfull >> SBBITS) & 3;
@@ -604,7 +592,7 @@ KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::dC6KK
 (
   const    int iat, const    int jat,
-  const double cni, const double cnj,
+  const F_FLOAT cni, const F_FLOAT cnj,
   double &C6, double &dC6_dCNi, double &dC6_dCNj
 ) const
 {
@@ -637,311 +625,6 @@ void PairDispersionD3Kokkos<DeviceType>::dC6KK
     dC6_dCNj = 0.0;
   }
 }
-/*
-template<class DeviceType>
-void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
-{
-  // Removed unused TeamPolicy / TeamMember (RangePolicy now used)
-  int eflag = eflag_in;
-  int vflag = vflag_in;
-  
-  if (atomKK->nmax > nmax) {
-    nmax = atomKK->nmax;
-    memoryKK->grow_kokkos(k_cn_v,  cn,  nmax, "pair:cn");
-    memoryKK->grow_kokkos(k_dc6_v, dc6, nmax, "pair:dc6");
-    if (eflag_atom) {
-      memoryKK->destroy_kokkos(k_eatom, eatom);
-      memoryKK->create_kokkos(k_eatom, eatom, nmax, "pair:eatom");
-      d_eatom = k_eatom.view<DeviceType>();
-    }
-    if (vflag_atom) {
-      memoryKK->destroy_kokkos(k_vatom, vatom);
-      memoryKK->create_kokkos(k_vatom, vatom, nmax, "pair:vatom");
-      d_vatom = k_vatom.view<DeviceType>();
-    }
-  }
-
-
-  special_lj[0] = force->special_lj[0];
-  special_lj[1] = force->special_lj[1];
-  special_lj[2] = force->special_lj[2];
-  special_lj[3] = force->special_lj[3];
-
-  ev_init(eflag, vflag); 
- 
-  calc_coordination_numbersKK();
- 
-  // Early return if no atoms to process
-  if (list->inum == 0) {
-    return;
-  } 
-  atomKK->sync(execution_space, X_MASK | TAG_MASK | TYPE_MASK); 
-  atomKK->modified(execution_space, F_MASK); 
-  if (eflag) atomKK->modified(execution_space, ENERGY_MASK | VIRIAL_MASK);
-  if (vflag) atomKK->modified(execution_space, VIRIAL_MASK);
-
-
-  
-
-
-  auto* k_list = static_cast<NeighListKokkos<DeviceType>*>(list);
-  d_numneigh   = k_list->d_numneigh;
-  d_neighbors  = k_list->d_neighbors;
-  d_ilist      = k_list->d_ilist;
-  inum         = list->inum;
-
-  d_x    = atomKK->k_x.view<DeviceType>();
-  d_f    = atomKK->k_f.view<DeviceType>();
-  d_type = atomKK->k_type.view<DeviceType>();
-
-
-
-  // clear dc6
-  Kokkos::deep_copy(d_dc6_v, 0.0);
-  
-  d_cutsq_v = k_cutsq_v.template view<DeviceType>();
-  
- 
-  copymode=1; 
-  
-      // Stage 1: only HALF + NEWTON=1 instantiations needed now
-   if (evflag) {
-     EV_FLOAT ev;
-     Kokkos::parallel_reduce(
-       Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJ<HALF,1,1>>(0, inum),
-       *this, ev);
-     if (eflag_global) eng_vdwl += ev.evdwl;
-     if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
-   } else {
-     Kokkos::parallel_for(
-       Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJ<HALF,1,0>>(0, inum),
-       *this);
-   }
-    
-   atomKK->modified(execution_space, F_MASK); 
-   communicationStage = 2;
-   k_dc6_v.template modify<DeviceType>();
-   comm->reverse_comm(this);
-   k_dc6_v.template sync<DeviceType>();
- 
-   k_dc6_v.template modify<DeviceType>();
-   comm->forward_comm(this);
-   k_dc6_v.template sync<DeviceType>();
-   
-   atomKK->sync(execution_space, F_MASK);
-    
-    // Stage 2
-   if (vflag) {
-     EV_FLOAT ev;
-     Kokkos::parallel_reduce(
-       Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF,1,1>>(0, inum),
-       *this, ev);
-     //if (eflag_global) eng_vdwl += ev.evdwl;
-     //if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
-   } else {
-     Kokkos::parallel_for(
-       Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF,1,0>>(0, inum),
-       *this);
-   }
-
-/*
-
-   if (evflag) {
-    EV_FLOAT ev;
-    if (newton_pair) {
-      Kokkos::parallel_reduce(
-        Kokkos::TeamPolicy<DeviceType, TagPairDispDD3dEdIJ<HALF,1,1>>(inum, Kokkos::AUTO()),
-        *this, ev);
-    } else {
-      Kokkos::parallel_reduce(
-        Kokkos::TeamPolicy<DeviceType, TagPairDispDD3dEdIJ<HALF,0,1>>(inum, Kokkos::AUTO()),
-        *this, ev);
-    }
-    if (eflag_global) eng_vdwl += ev.evdwl;
-    if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
-  } else {
-    if (newton_pair) {
-      Kokkos::parallel_for(
-        Kokkos::TeamPolicy<DeviceType, TagPairDispDD3dEdIJ<HALF,1,0>>(inum, Kokkos::AUTO()),
-        *this);
-    } else {
-      Kokkos::parallel_for(
-        Kokkos::TeamPolicy<DeviceType, TagPairDispDD3dEdIJ<HALF,0,0>>(inum, Kokkos::AUTO()),
-        *this);
-    }
-  }
-  // -------------------------
-  // Comms between stages
-  // -------------------------
-  communicationStage = 2;
-  if (newton_pair) {
-    //k_cn_v.template modify<DeviceType>();
-    k_dc6_v.template modify<DeviceType>();
-    comm->reverse_comm(this);
-    //k_cn_v.template sync<DeviceType>();
-    k_dc6_v.template sync<DeviceType>();
-  }
-  // Always forward (match base code)
-  //k_cn_v.template modify<DeviceType>();
-  k_dc6_v.template modify<DeviceType>();
-  comm->forward_comm(this);
-  //k_cn_v.template sync<DeviceType>();
-  k_dc6_v.template sync<DeviceType>();
-
-  // -------------------------
-  // Stage 2: dE/dxyz from dc6
-  // -------------------------
-  if (evflag) {
-    EV_FLOAT ev;
-    if (newton_pair) {
-      Kokkos::parallel_reduce(
-        Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF,1,1>>(0, inum), 
-        *this, ev);
-    } else {
-      Kokkos::parallel_reduce(
-        Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF,0,1>>(0, inum),
-        *this, ev);
-    }
-    if (eflag_global) eng_vdwl += ev.evdwl;
-    if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
-  } else {
-    if (newton_pair) {
-      Kokkos::parallel_for(
-        Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF,1,0>>(0, inum),
-        *this);
-    } else {
-      Kokkos::parallel_for(
-        Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF,0,0>>(0,inum), 
-        *this);
-    }
-  }\*\/
-  // forces modified again
-  atomKK->modified(execution_space, datamask_modify);
-  x = atomKK->k_x.view<DeviceType>();
-  f = atomKK->k_f.view<DeviceType>();
-  if (vflag_fdotr) pair_virial_fdotr_compute(this);
-  //if (vflag_fdotr) virial_fdotr_compute();
-  copymode = 0;
-  if constexpr (!std::is_same_v<DeviceType, LMPHostType>) {
-    atomKK->sync(Host, F_MASK);
-  }
-}
-
-*/
-
-// EV version (RangePolicy)
-/*
-template<class DeviceType>
-template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
-KOKKOS_INLINE_FUNCTION
-void PairDispersionD3Kokkos<DeviceType>::operator()(
-  TagPairDispDD3dEdIJ<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
-{
-  auto v_f_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_f),decltype(ndup_f)>::get(dup_f,ndup_f);
-  auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
-
-  auto v_dc6_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_dc6), decltype(ndup_dc6)>::get(dup_dc6, ndup_dc6);
-  auto a_dc6_scv = v_dc6_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();  
-
-  if (ii >= inum) return;
-  const int i = d_ilist[ii];
-  if (i >= nlocal) return;
-  const int itype = d_type(i);
-  if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
-
-  const double xi = d_x(i,0);
-  const double yi = d_x(i,1);
-  const double zi = d_x(i,2);
-
-  double fix = 0.0, fiy = 0.0, fiz = 0.0;
-
-  const int jnum = d_numneigh[i];
-  for (int jj = 0; jj < jnum; ++jj) {
-    const int jfull = d_neighbors(i,jj);
-    const double factor_lj = special_lj[sbmask_disp(jfull)];
-    const int j = jfull & NEIGHMASK;
-    const int jtype = d_type(j);
-
-    const double dx  = xi - d_x(j,0);
-    const double dy  = yi - d_x(j,1);
-    const double dz  = zi - d_x(j,2);
-    const double rsq = dx*dx + dy*dy + dz*dz;
-
-    if (rsq >= d_cutsq_v(itype,jtype)) continue;
-
-    const double r      = sqrt(rsq);
-    const double r2inv  = 1.0 / rsq;
-    const double r4inv  = r2inv * r2inv;
-    const double r6inv  = r4inv * r2inv;
-    const double r8inv  = r6inv * r2inv;
-    const double r10inv = r8inv * r2inv;
-
-    const double cni = d_cn_v(i);
-    const double cnj = d_cn_v(j);
-
-    double C6=0.0, dC6_i=0.0, dC6_j=0.0;
-    dC6KK(itype, jtype, cni, cnj, C6, dC6_i, dC6_j);
-    if (C6 == 0.0) continue;
-
-    const double C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
-
-    const double r0     = r / d_r0ab_v(itype, jtype);
-    const double alpha6 = alpha;
-    const double alpha8 = alpha + 2.0;
-
-    const double t6    = pow(rs6 / r0, alpha6);
-    const double damp6 = 1.0 / (1.0 + 6.0 * t6);
-    const double t8    = pow(rs8 / r0, alpha8);
-    const double damp8 = 1.0 / (1.0 + 6.0 * t8);
-
-    const double e6 = C6 * damp6 * r6inv;
-    const double e8 = C8 * damp8 * r8inv;
-
-    const double tmp6 = 6.0 * s6 * C6 * r8inv  * damp6;
-    const double tmp8 = 8.0 * s8 * C8 * r10inv * damp8;
-
-    const double fpair_no_damp = -(tmp6 + tmp8);
-    const double fpair_damp    =  (tmp6 * alpha6 * t6 * damp6)
-                                + (tmp8 * alpha8 * t8 * damp8 * 0.75);
-    const double fpair = (fpair_no_damp + fpair_damp) * factor_lj;
-
-    const double phi = -(s6 * e6 + s8 * e8) * factor_lj;
-
-    const double rest = (s6 * e6 + s8 * e8) / C6;
-    
-    a_dc6_scv(i) += rest*dC6_i;
-    if (NEWTON_PAIR || j < nlocal)
-      a_dc6_scv(j) += rest*dC6_j;
-
-    fix += dx * fpair;
-    fiy += dy * fpair;
-    fiz += dz * fpair;
-
-    if (NEWTON_PAIR || j < nlocal) {
-      a_f_scv(j,0) -= fix;
-      a_f_scv(j,1) -= fiy;
-      a_f_scv(j,2) -= fiz;
-    }
-
-    if (EVFLAG) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
-  }
-
-  a_f_scv(i, 0) += fix;
-  a_f_scv(i, 1) += fiy;
-  a_f_scv(i, 2) += fiz;
-}
-
-// NO-EV version (RangePolicy)
-template<class DeviceType>
-template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
-KOKKOS_INLINE_FUNCTION
-void PairDispersionD3Kokkos<DeviceType>::operator()(
-  TagPairDispDD3dEdIJ<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii) const
-{
-  EV_FLOAT ev; // unused if EVFLAG==0
-  operator()(TagPairDispDD3dEdIJ<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(), ii, ev);
-}
-*/
 
 template<class DeviceType>
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
@@ -951,15 +634,13 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZ<NEIGHFL
   auto v_f_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_f),decltype(ndup_f)>::get(dup_f,ndup_f);
   auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
 
- // auto v_dc6_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_dc6), decltype(ndup_dc6)>::get(dup_dc6, ndup_dc6);
- // auto a_dc6_scv = v_dc6_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();  
   
   if (ii >= inum) return;
   const int i = d_ilist[ii];
   if (i >= nlocal) return ; 
-  const double xi = d_x(i,0);
-  const double yi = d_x(i,1);
-  const double zi = d_x(i,2);
+  const F_FLOAT  xi = d_x(i,0);
+  const F_FLOAT  yi = d_x(i,1);
+  const F_FLOAT  zi = d_x(i,2);
   const int itype = d_type(i);
 
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
@@ -969,33 +650,33 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZ<NEIGHFL
   for (int jj = 0; jj < jnum; ++jj) 
   {
     const int jfull = d_neighbors(i,jj);
-    const double factor_lj = special_lj[sbmask_disp(jfull)]; 
+    const F_FLOAT factor_lj = special_lj[sbmask_disp(jfull)]; 
     const int j = jfull & NEIGHMASK;
     const int jtype = d_type(j);
 
-    const double dx = xi - d_x(j,0);
-    const double dy = yi - d_x(j,1);
-    const double dz = zi - d_x(j,2);
-    const double rsq = dx*dx + dy*dy + dz*dz;
+    const F_FLOAT  dx = xi - d_x(j,0);
+    const F_FLOAT  dy = yi - d_x(j,1);
+    const F_FLOAT  dz = zi - d_x(j,2);
+    const F_FLOAT  rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq < d_cutsq_v(itype, jtype)) 
     {
-      const double r = sqrt(rsq);
+      const F_FLOAT r = sqrt(rsq);
       
-      double dcn = 0.0;
+      F_FLOAT dcn = 0.0;
       if (rsq < cn_thr)
       { 
-        const double rcovij  = (d_rcov_v(itype) + d_rcov_v(jtype))*autoang;
-        const double expterm = exp(-K1 * (rcovij / r - 1.0));
+        const F_FLOAT  rcovij  = (d_rcov_v(itype) + d_rcov_v(jtype))*autoang;
+        const F_FLOAT  expterm = exp(-K1 * (rcovij / r - 1.0));
         dcn = -K1 * rcovij * expterm / (rsq * (expterm + 1.0) * (expterm + 1.0));
       } 
 
-      const double fpair1 = dcn * (d_dc6_v(i) + d_dc6_v(j)) / r ; 
-      const double fpair  = fpair1*factor_lj;
+      const F_FLOAT  fpair1 = dcn * (d_dc6_v(i) + d_dc6_v(j)) / r ; 
+      const F_FLOAT  fpair  = fpair1*factor_lj;
      
-      const double fx = dx * fpair;
-      const double fy = dy * fpair; 
-      const double fz = dz * fpair;
+      const F_FLOAT  fx = dx * fpair;
+      const F_FLOAT  fy = dy * fpair; 
+      const F_FLOAT  fz = dz * fpair;
     
       fix += fx;
       fiy += fy;
@@ -1403,74 +1084,74 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   const int itype = d_type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
-  const double xi = d_x(i,0);
-  const double yi = d_x(i,1);
-  const double zi = d_x(i,2);
+  const F_FLOAT xi = d_x(i,0);
+  const F_FLOAT yi = d_x(i,1);
+  const F_FLOAT zi = d_x(i,2);
 
   double fix = 0.0, fiy = 0.0, fiz = 0.0;
 
   const int jnum = d_numneigh[i];
   for (int jj = 0; jj < jnum; ++jj) {
     const int jfull = d_neighbors(i,jj);
-    const double factor_lj = special_lj[sbmask_disp(jfull)];
+    const F_FLOAT factor_lj = special_lj[sbmask_disp(jfull)];
     const int j = jfull & NEIGHMASK;
     const int jtype = d_type(j);
     if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue; 
 
-    const double dx  = xi - d_x(j,0);
-    const double dy  = yi - d_x(j,1);
-    const double dz  = zi - d_x(j,2);
-    const double rsq = dx*dx + dy*dy + dz*dz;
+    const F_FLOAT dx  = xi - d_x(j,0);
+    const F_FLOAT dy  = yi - d_x(j,1);
+    const F_FLOAT dz  = zi - d_x(j,2);
+    const F_FLOAT rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq >= d_cutsq_v(itype,jtype)) continue;
 
-    const double r      = sqrt(rsq);
-    const double r2inv  = 1.0 / rsq;
-    const double r4inv  = r2inv * r2inv;
-    const double r6inv  = r4inv * r2inv;
-    const double r8inv  = r6inv * r2inv;
-    const double r10inv = r8inv * r2inv;
+    const F_FLOAT r      = sqrt(rsq);
+    const F_FLOAT r2inv  = 1.0 / rsq;
+    const F_FLOAT r4inv  = r2inv * r2inv;
+    const F_FLOAT r6inv  = r4inv * r2inv;
+    const F_FLOAT r8inv  = r6inv * r2inv;
+    const F_FLOAT r10inv = r8inv * r2inv;
 
-    const double cni = d_cn_v(i);
-    const double cnj = d_cn_v(j);
+    const F_FLOAT cni = d_cn_v(i);
+    const F_FLOAT cnj = d_cn_v(j);
 
     double C6=0.0, dC6_i=0.0, dC6_j=0.0;
     dC6KK(itype, jtype, cni, cnj, C6, dC6_i, dC6_j);
     if (C6 == 0.0) continue;
 
-    const double C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
+    const F_FLOAT C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
 
-    const double r0     = r / d_r0ab_v(itype, jtype);
-    const double alpha6 = alpha;
-    const double alpha8 = alpha + 2.0;
+    const F_FLOAT r0     = r / d_r0ab_v(itype, jtype);
+    const F_FLOAT alpha6 = alpha;
+    const F_FLOAT alpha8 = alpha + 2.0;
 
-    const double t6    = pow(rs6 / r0, alpha6);
-    const double damp6 = 1.0 / (1.0 + 6.0 * t6);
-    const double t8    = pow(rs8 / r0, alpha8);
-    const double damp8 = 1.0 / (1.0 + 6.0 * t8);
+    const F_FLOAT t6    = pow(rs6 / r0, alpha6);
+    const F_FLOAT damp6 = 1.0 / (1.0 + 6.0 * t6);
+    const F_FLOAT t8    = pow(rs8 / r0, alpha8);
+    const F_FLOAT damp8 = 1.0 / (1.0 + 6.0 * t8);
 
-    const double e6 = C6 * damp6 * r6inv;
-    const double e8 = C8 * damp8 * r8inv;
+    const F_FLOAT e6 = C6 * damp6 * r6inv;
+    const F_FLOAT e8 = C8 * damp8 * r8inv;
 
-    const double tmp6 = 6.0 * s6 * C6 * r8inv  * damp6;
-    const double tmp8 = 8.0 * s8 * C8 * r10inv * damp8;
+    const F_FLOAT tmp6 = 6.0 * s6 * C6 * r8inv  * damp6;
+    const F_FLOAT tmp8 = 8.0 * s8 * C8 * r10inv * damp8;
 
-    const double fpair_no_damp = -(tmp6 + tmp8);
-    const double fpair_damp    =  (tmp6 * alpha6 * t6 * damp6)
+    const F_FLOAT fpair_no_damp = -(tmp6 + tmp8);
+    const F_FLOAT fpair_damp    =  (tmp6 * alpha6 * t6 * damp6)
                                 + (tmp8 * alpha8 * t8 * damp8 * 0.75);
-    const double fpair = (fpair_no_damp + fpair_damp) * factor_lj;
+    const F_FLOAT fpair = (fpair_no_damp + fpair_damp) * factor_lj;
 
-    const double phi = -(s6 * e6 + s8 * e8) * factor_lj;
+    const F_FLOAT phi = -(s6 * e6 + s8 * e8) * factor_lj;
 
-    const double rest = (s6 * e6 + s8 * e8) / C6;
+    const F_FLOAT rest = (s6 * e6 + s8 * e8) / C6;
     
     a_dc6_scv(i) += rest*dC6_i;
     if (NEWTON_PAIR || j < nlocal)
       a_dc6_scv(j) += rest*dC6_j;
 
-    const double fx = dx * fpair;
-    const double fy = dy * fpair;
-    const double fz = dz * fpair;
+    const F_FLOAT fx = dx * fpair;
+    const F_FLOAT fy = dy * fpair;
+    const F_FLOAT fz = dz * fpair;
     
     fix += fx;
     fiy += fy;
@@ -1519,77 +1200,77 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   const int itype = d_type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
-  const double xi = d_x(i,0);
-  const double yi = d_x(i,1);
-  const double zi = d_x(i,2);
+  const F_FLOAT xi = d_x(i,0);
+  const F_FLOAT yi = d_x(i,1);
+  const F_FLOAT zi = d_x(i,2);
 
   double fix = 0.0, fiy = 0.0, fiz = 0.0;
 
   const int jnum = d_numneigh[i];
   for (int jj = 0; jj < jnum; ++jj) {
     const int jfull = d_neighbors(i,jj);
-    const double factor_lj = special_lj[sbmask_disp(jfull)];
+    const F_FLOAT factor_lj = special_lj[sbmask_disp(jfull)];
     const int j = jfull & NEIGHMASK;
     const int jtype = d_type(j);
     if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue;
 
-    const double dx  = xi - d_x(j,0);
-    const double dy  = yi - d_x(j,1);
-    const double dz  = zi - d_x(j,2);
-    const double rsq = dx*dx + dy*dy + dz*dz;
+    const F_FLOAT dx  = xi - d_x(j,0);
+    const F_FLOAT dy  = yi - d_x(j,1);
+    const F_FLOAT dz  = zi - d_x(j,2);
+    const F_FLOAT rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq >= d_cutsq_v(itype,jtype)) continue;
 
-    const double r      = sqrt(rsq);
-    const double r2inv  = 1.0 / rsq;
-    const double r4inv  = r2inv * r2inv;
-    const double r6inv  = r4inv * r2inv;
-    const double r8inv  = r6inv * r2inv;
-    const double r10inv = r8inv * r2inv;
+    const F_FLOAT r      = sqrt(rsq);
+    const F_FLOAT r2inv  = 1.0 / rsq;
+    const F_FLOAT r4inv  = r2inv * r2inv;
+    const F_FLOAT r6inv  = r4inv * r2inv;
+    const F_FLOAT r8inv  = r6inv * r2inv;
+    const F_FLOAT r10inv = r8inv * r2inv;
 
-    const double cni = d_cn_v(i);
-    const double cnj = d_cn_v(j);
+    const F_FLOAT cni = d_cn_v(i);
+    const F_FLOAT cnj = d_cn_v(j);
 
     double C6=0.0, dC6_i=0.0, dC6_j=0.0;
     dC6KK(itype, jtype, cni, cnj, C6, dC6_i, dC6_j);
     if (C6 == 0.0) continue;
 
-    const double C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
+    const F_FLOAT C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
 
-    const double r0     = d_r0ab_v(itype, jtype);
-    const double alpha6 = alpha;
-    const double alpha8 = alpha + 2.0;
+    const F_FLOAT r0     = d_r0ab_v(itype, jtype);
+    const F_FLOAT alpha6 = alpha;
+    const F_FLOAT alpha8 = alpha + 2.0;
 
-    const double t6     = pow((r / (rs6*r0))+rs8*r0, -alpha6);
-    const double t8     = pow((r/r0)+rs8*r0, -alpha8);
-    const double damp6  = 1.0 / ( 1.0 + (6.0*t6));
-    const double damp8  = 1.0 / ( 1.0 + (6.0*t8));
+    const F_FLOAT t6     = pow((r / (rs6*r0))+rs8*r0, -alpha6);
+    const F_FLOAT t8     = pow((r/r0)+rs8*r0, -alpha8);
+    const F_FLOAT damp6  = 1.0 / ( 1.0 + (6.0*t6));
+    const F_FLOAT damp8  = 1.0 / ( 1.0 + (6.0*t8));
    
-    const double e6     = C6 * damp6 * r6inv;
-    const double e8     = C8 * damp8 * r8inv;
+    const F_FLOAT e6     = C6 * damp6 * r6inv;
+    const F_FLOAT e8     = C8 * damp8 * r8inv;
 
-    const double tmp6   = 6.0 * s6 * C6 * r8inv  * damp6;   
-    const double tmp8   = 8.0 * s8 * C8 * r10inv * damp8;
+    const F_FLOAT tmp6   = 6.0 * s6 * C6 * r8inv  * damp6;   
+    const F_FLOAT tmp8   = 8.0 * s8 * C8 * r10inv * damp8;
 
-    const double fpair1   = -(tmp6 + tmp8);
+    const F_FLOAT fpair1   = -(tmp6 + tmp8);
  
-    const double fp26     = tmp6 * alpha6 * t6 * damp6 * r / (r+rs6*rs8*r0*r0);
-    const double fp28     = tmp8 * alpha8 * t8 * damp8 * r / (r+rs6*r0*r0);
+    const F_FLOAT fp26     = tmp6 * alpha6 * t6 * damp6 * r / (r+rs6*rs8*r0*r0);
+    const F_FLOAT fp28     = tmp8 * alpha8 * t8 * damp8 * r / (r+rs6*r0*r0);
 
-    const double fpair2   = fp26 + (0.75 *fp28);
-    const double fpair    = (fpair1 + fpair2) * factor_lj; 
+    const F_FLOAT fpair2   = fp26 + (0.75 *fp28);
+    const F_FLOAT fpair    = (fpair1 + fpair2) * factor_lj; 
     
-    const double phi = -(s6 * e6 + s8 * e8) * factor_lj;
+    const F_FLOAT phi = -(s6 * e6 + s8 * e8) * factor_lj;
 
-    const double rest = (s6 * e6 + s8 * e8) / C6;
+    const F_FLOAT rest = (s6 * e6 + s8 * e8) / C6;
     
     a_dc6_scv(i) += rest*dC6_i;
     if (NEWTON_PAIR || j < nlocal)
       a_dc6_scv(j) += rest*dC6_j;
 
-    const double fx = dx * fpair;
-    const double fy = dy * fpair;
-    const double fz = dz * fpair;
+    const F_FLOAT fx = dx * fpair;
+    const F_FLOAT fy = dy * fpair;
+    const F_FLOAT fz = dz * fpair;
 
     fix += fx; fiy += fy; fiz += fz; 
     if (NEWTON_PAIR || j < nlocal) {
@@ -1625,6 +1306,9 @@ KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(
   TagPairDispDD3dEdIJOriginalBJDamping<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
 {
+
+  F_FLOAT fix = 0.0, fiy = 0.0, fiz = 0.0;
+
   auto v_f_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_f),decltype(ndup_f)>::get(dup_f,ndup_f);
   auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
 
@@ -1634,79 +1318,63 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   if (ii >= inum) return;
   const int i = d_ilist[ii];
   if (i >= nlocal) return;
+
   const int itype = d_type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
-  const double xi = d_x(i,0);
-  const double yi = d_x(i,1);
-  const double zi = d_x(i,2);
+  const F_FLOAT xi = d_x(i,0);
+  const F_FLOAT yi = d_x(i,1);
+  const F_FLOAT zi = d_x(i,2);
 
-  double fix = 0.0, fiy = 0.0, fiz = 0.0;
 
   const int jnum = d_numneigh[i];
   for (int jj = 0; jj < jnum; ++jj) {
     const int jfull = d_neighbors(i,jj);
-    const double factor_lj = special_lj[sbmask_disp(jfull)];
+    const F_FLOAT factor_lj = special_lj[sbmask_disp(jfull)];
     const int j = jfull & NEIGHMASK;
     const int jtype = d_type(j);
     if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue;
 
-    const double dx  = xi - d_x(j,0);
-    const double dy  = yi - d_x(j,1);
-    const double dz  = zi - d_x(j,2);
-    const double rsq = dx*dx + dy*dy + dz*dz;
+    const F_FLOAT  dx  = xi - d_x(j,0);
+    const F_FLOAT  dy  = yi - d_x(j,1);
+    const F_FLOAT  dz  = zi - d_x(j,2);
+    const F_FLOAT  rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq >= d_cutsq_v(itype,jtype)) continue;
 
-    const double r      = sqrt(rsq);
-    //const double r2inv  = 1.0 / rsq;
-    //const double r4inv  = r2inv * r2inv;
-    //const double r6inv  = r4inv * r2inv;
-    //const double r8inv  = r6inv * r2inv;
-    //const double r10inv = r8inv * r2inv;
+    const F_FLOAT  r      = sqrt(rsq);
+    const F_FLOAT  cni = d_cn_v(i);
+    const F_FLOAT  cnj = d_cn_v(j);
 
-    const double cni = d_cn_v(i);
-    const double cnj = d_cn_v(j);
-
-    double C6=0.0, dC6_i=0.0, dC6_j=0.0;
+    F_FLOAT C6=0.0, dC6_i=0.0, dC6_j=0.0;
     dC6KK(itype, jtype, cni, cnj, C6, dC6_i, dC6_j);
     if (C6 == 0.0) continue;
 
-    const double C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
-
-    const double r0     = sqrt(C8/C6);
-    const double r4     = rsq*rsq;
-    const double r6     = rsq*rsq*rsq;
-    const double r8     = rsq*rsq*rsq*rsq;
+    const F_FLOAT   C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
+    const F_FLOAT   r0     = sqrt(C8/C6);
+    const F_FLOAT   r4     = rsq*rsq;
+    const F_FLOAT   r6     = rsq*rsq*rsq;
+    const F_FLOAT   r8     = rsq*rsq*rsq*rsq;
 
     // ip - inner product 
-    const double iptmp  = ((a1*r0)+a2);
-    const double expt6  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
-    const double expt8  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
-    const double t6     = r6 + expt6 ;
-    const double t8     = r8 + expt8 ; 
-
-    const double e6     = C6/t6;
-    const double e8     = C8/t8;
-
-
-    const double tmp6   = (6.0 * s6 * C6 * r4) / (t6*t6);
-    const double tmp8   = (8.0 * s8 * C8 * r6) / (t8*t8);
-
-    const double fpairsum = -(tmp6 + tmp8);
-    const double fpair    = fpairsum * factor_lj;
-
-
-    const double phi = -(s6 * e6 + s8 * e8) * factor_lj;
-    const double rest = (s6 * e6 + s8 * e8) / C6;
+    const F_FLOAT   iptmp  = ((a1*r0)+a2);
+    const F_FLOAT   expt6  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
+    const F_FLOAT   expt8  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
+    const F_FLOAT   t6     = r6 + expt6 ;
+    const F_FLOAT   t8     = r8 + expt8 ; 
+    const F_FLOAT   e6     = C6/t6;
+    const F_FLOAT   e8     = C8/t8;
+    const F_FLOAT   tmp6   = (6.0 * s6 * C6 * r4) / (t6*t6);
+    const F_FLOAT   tmp8   = (8.0 * s8 * C8 * r6) / (t8*t8);
+    const F_FLOAT   fpairsum = -(tmp6 + tmp8);
+    const F_FLOAT   fpair    = fpairsum * factor_lj;
+    const F_FLOAT   phi = -(s6 * e6 + s8 * e8) * factor_lj;
+    const F_FLOAT   rest = (s6 * e6 + s8 * e8) / C6;
     
-    a_dc6_scv(i) += rest*dC6_i;
-    if (NEWTON_PAIR || j < nlocal)
-      a_dc6_scv(j) += rest*dC6_j;
 
-    const double fx = dx * fpair;
-    const double fy = dy * fpair;
-    const double fz = dz * fpair;
+    const F_FLOAT  fx = dx * fpair;
+    const F_FLOAT  fy = dy * fpair;
+    const F_FLOAT  fz = dz * fpair;
 
     fix += fx; fiy += fy; fiz += fz;
     if (NEWTON_PAIR || j < nlocal) {
@@ -1714,6 +1382,9 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
       a_f_scv(j,1) -= fy;
       a_f_scv(j,2) -= fz;
     }
+
+    a_dc6_scv(i) += rest*dC6_i;
+    if (NEWTON_PAIR || j < nlocal) a_dc6_scv(j) += rest*dC6_j;
 
     if (EVFLAG) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
   }
@@ -1757,76 +1428,70 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   const int itype = d_type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
-  const double xi = d_x(i,0);
-  const double yi = d_x(i,1);
-  const double zi = d_x(i,2);
+  const F_FLOAT xi = d_x(i,0);
+  const F_FLOAT yi = d_x(i,1);
+  const F_FLOAT zi = d_x(i,2);
 
   double fix = 0.0, fiy = 0.0, fiz = 0.0;
 
   const int jnum = d_numneigh[i];
   for (int jj = 0; jj < jnum; ++jj) {
     const int jfull = d_neighbors(i,jj);
-    const double factor_lj = special_lj[sbmask_disp(jfull)];
+    const F_FLOAT factor_lj = special_lj[sbmask_disp(jfull)];
     const int j = jfull & NEIGHMASK;
     const int jtype = d_type(j);
     if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue;
 
-    const double dx  = xi - d_x(j,0);
-    const double dy  = yi - d_x(j,1);
-    const double dz  = zi - d_x(j,2);
-    const double rsq = dx*dx + dy*dy + dz*dz;
+    const F_FLOAT dx  = xi - d_x(j,0);
+    const F_FLOAT dy  = yi - d_x(j,1);
+    const F_FLOAT dz  = zi - d_x(j,2);
+    const F_FLOAT rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq >= d_cutsq_v(itype,jtype)) continue;
 
-    const double r      = sqrt(rsq);
-    //const double r2inv  = 1.0 / rsq;
-    //const double r4inv  = r2inv * r2inv;
-    //const double r6inv  = r4inv * r2inv;
-    //const double r8inv  = r6inv * r2inv;
-    //const double r10inv = r8inv * r2inv;
-
-    const double cni = d_cn_v(i);
-    const double cnj = d_cn_v(j);
+    const F_FLOAT r      = sqrt(rsq);
+    const F_FLOAT cni = d_cn_v(i);
+    const F_FLOAT cnj = d_cn_v(j);
 
     double C6=0.0, dC6_i=0.0, dC6_j=0.0;
     dC6KK(itype, jtype, cni, cnj, C6, dC6_i, dC6_j);
     if (C6 == 0.0) continue;
 
-    const double C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
+    const F_FLOAT C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
 
-    const double r0     = sqrt(C8/C6);
-    const double r4     = rsq*rsq;
-    const double r6     = rsq*rsq*rsq;
-    const double r8     = rsq*rsq*rsq*rsq;
+    const F_FLOAT r0     = sqrt(C8/C6);
+    const F_FLOAT r4     = rsq*rsq;
+    const F_FLOAT r6     = rsq*rsq*rsq;
+    const F_FLOAT r8     = rsq*rsq*rsq*rsq;
 
     // ip - inner product 
-    const double iptmp  = (a1*r0+a2);
-    const double expt6  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
-    const double expt8  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
-    const double t6     = r6 + expt6 ;
-    const double t8     = r8 + expt8 ; 
+    const F_FLOAT iptmp  = (a1*r0+a2);
+    const F_FLOAT expt6  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
+    const F_FLOAT expt8  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
+    const F_FLOAT t6     = r6 + expt6 ;
+    const F_FLOAT t8     = r8 + expt8 ; 
 
-    const double e6     = C6/t6;
-    const double e8     = C8/t8;
-
-
-    const double tmp6   = (6.0 * s6 * C6 * r4) / (t6*t6);
-    const double tmp8   = (8.0 * s8 * C8 * r6) / (t8*t8);
-
-    const double fpairsum = -(tmp6 + tmp8);
-    const double fpair    = fpairsum * factor_lj;
+    const F_FLOAT e6     = C6/t6;
+    const F_FLOAT e8     = C8/t8;
 
 
-    const double phi = -(s6 * e6 + s8 * e8) * factor_lj;
-    const double rest = (s6 * e6 + s8 * e8) / C6;
+    const F_FLOAT tmp6   = (6.0 * s6 * C6 * r4) / (t6*t6);
+    const F_FLOAT tmp8   = (8.0 * s8 * C8 * r6) / (t8*t8);
+
+    const F_FLOAT fpairsum = -(tmp6 + tmp8);
+    const F_FLOAT fpair    = fpairsum * factor_lj;
+
+
+    const F_FLOAT phi = -(s6 * e6 + s8 * e8) * factor_lj;
+    const F_FLOAT rest = (s6 * e6 + s8 * e8) / C6;
     
     a_dc6_scv(i) += rest*dC6_i;
     if (NEWTON_PAIR || j < nlocal)
       a_dc6_scv(j) += rest*dC6_j;
 
-    const double fx = dx * fpair;
-    const double fy = dy * fpair;
-    const double fz = dz * fpair;
+    const F_FLOAT fx = dx * fpair;
+    const F_FLOAT fy = dy * fpair;
+    const F_FLOAT fz = dz * fpair;
 
     fix += fx; fiy += fy; fiz += fz;
     if (NEWTON_PAIR || j < nlocal) {
