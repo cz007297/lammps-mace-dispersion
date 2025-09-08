@@ -18,7 +18,12 @@
 #include <stdexcept>
 #include <unordered_map>
 #include "kokkos_few.h"
-
+#ifdef D3K_DEBUG
+#define D3K_DEBUG_NETF
+#define D3K_DEBUG_BALANCE
+#define D3K_DEBUG_CN
+#define D3K_DEBUG_DC6
+#endif
 
 using namespace LAMMPS_NS;
 static constexpr int NUM_ELEMENTS=94;
@@ -173,6 +178,29 @@ void PairDispersionD3Kokkos<DeviceType>::init_style()
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 {
+  auto debug_netF = [&](const char* tag){
+  #ifdef D3K_DEBUG_NETF
+    double sx = 0.0, sy = 0.0, sz = 0.0;
+    auto vf = d_f;
+    const int nloc = nlocal;
+  
+    Kokkos::parallel_reduce(
+        Kokkos::RangePolicy<DeviceType>(0, nloc),
+        KOKKOS_LAMBDA(const int ii, double& s){ s += vf(ii,0); }, sx);
+    Kokkos::parallel_reduce(
+        Kokkos::RangePolicy<DeviceType>(0, nloc),
+        KOKKOS_LAMBDA(const int ii, double& s){ s += vf(ii,1); }, sy);
+    Kokkos::parallel_reduce(
+        Kokkos::RangePolicy<DeviceType>(0, nloc),
+        KOKKOS_LAMBDA(const int ii, double& s){ s += vf(ii,2); }, sz);
+  
+    double g[3] = {sx, sy, sz}, G[3];
+    MPI_Allreduce(g, G, 3, MPI_DOUBLE, MPI_SUM, world);
+    if (comm->me == 0)
+      fprintf(stderr, "[D3K] %s step %lld netF=(%.6e %.6e %.6e)\n",
+              tag, (long long)update->ntimestep, G[0], G[1], G[2]);
+  #endif
+  };
   std::unordered_map<std::string, int> dampingMap = {
       {"original", 1}, {"zerom", 2}, {"bj", 3}, {"bjm",4}};
   int dampingCode = dampingMap[damping_type];
@@ -182,25 +210,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   
   ev_init(eflag, vflag);
   
-  // FIRST SYNC AFTER EV_INIT
-  atomKK->sync(execution_space, datamask_read);
-  if (eflag || vflag ) atomKK->modified(execution_space, datamask_modify);
-
- 
-  special_lj[0] = force->special_lj[0];
-  special_lj[1] = force->special_lj[1];
-  special_lj[2] = force->special_lj[2];
-  special_lj[3] = force->special_lj[3];
-  
-  // Ensure per-atom capacity first
-  const int req_nmax = atom->nmax;
-  if (!k_cn_v.span() || !k_dc6_v.span() || req_nmax > nmax) {
-    nmax = req_nmax;
-    memoryKK->grow_kokkos(k_cn_v,  cn,  nmax, "pair:cn");
-    memoryKK->grow_kokkos(k_dc6_v, dc6, nmax, "pair:dc6");
-  }
-
-  //nmax = atomKK->nmax;
   if (eflag_atom)
   {
     if (!k_eatom.span() || k_eatom.extent(0) < nmax) 
@@ -219,6 +228,26 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     }
     d_vatom = k_vatom.view<DeviceType>();
   }
+  
+  // FIRST SYNC AFTER EV_INIT
+  atomKK->sync(execution_space, datamask_read);
+  if (eflag || vflag ) atomKK->modified(execution_space, datamask_modify);
+  else atomKK->modified(execution_space, F_MASK);
+ 
+  special_lj[0] = force->special_lj[0];
+  special_lj[1] = force->special_lj[1];
+  special_lj[2] = force->special_lj[2];
+  special_lj[3] = force->special_lj[3];
+  
+  // Ensure per-atom capacity first
+  const int req_nmax = atom->nmax;
+  if (!k_cn_v.span() || !k_dc6_v.span() || req_nmax > nmax) {
+    nmax = req_nmax;
+    memoryKK->grow_kokkos(k_cn_v,  cn,  nmax, "pair:cn");
+    memoryKK->grow_kokkos(k_dc6_v, dc6, nmax, "pair:dc6");
+  }
+
+  //nmax = atomKK->nmax;
 
   d_cn_v  = k_cn_v.view<DeviceType>();
   d_dc6_v = k_dc6_v.view<DeviceType>();
@@ -238,10 +267,10 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   d_ilist      =  k_list->d_ilist;
   inum = list->inum;
 
-  k_cn_v.template sync<DeviceType>();
-  k_dc6_v.template sync<DeviceType>();
-  k_cn_v.template modify<DeviceType>();
-  k_dc6_v.template modify<DeviceType>();
+  //k_cn_v.template sync<DeviceType>();
+  //k_dc6_v.template sync<DeviceType>();
+  //k_cn_v.template modify<DeviceType>();
+  //k_dc6_v.template modify<DeviceType>();
 
   ndup_cn    =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_cn_v);
   ndup_dc6   =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_dc6_v);
@@ -254,7 +283,9 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   // Zero out cn & dc6
   Kokkos::deep_copy(d_dc6_v, 0.0);
   Kokkos::deep_copy(d_cn_v, 0.0);
-  
+  k_dc6_v.template modify<DeviceType>();
+  k_cn_v.template modify<DeviceType>(); 
+ 
   // Compute CN aka Kernel 0 
 
   Kokkos::parallel_for(policyInstance<TagPairDD3KokkosCNDC6Kernel<HALF>>::get(inum), *this); 
@@ -267,13 +298,16 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
       comm->reverse_comm(this);
       k_cn_v.template sync<DeviceType>();
     }
-  else 
-  {
-     k_cn_v.template modify<DeviceType>();
-     comm->forward_comm(this);
-     k_cn_v.template sync<DeviceType>();
-  }
+  k_cn_v.template modify<DeviceType>();
+  comm->forward_comm(this);
+  k_cn_v.template sync<DeviceType>();
 
+  #if defined(D3K_DEBUG_CN) && !defined(KOKKOS_ENABLE_CUDA)
+  if (comm->me==0) {
+    int imax = std::min(5, nlocal);
+    for (int i=0;i<imax;i++) printf("[CN ] i=%d cn=%.6e\n", i, (double)k_cn_v.h_view(i));
+  }
+  #endif
   // Main Kernels Switch Logic Here - NEWTON_PAIR hardcoded to one by design 
   // compute kernel 1
   switch (dampingCode) {
@@ -343,7 +377,10 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
      } break;
     
   }
-  atomKK->modified(execution_space, F_MASK);
+  debug_netF("after_dEdIJ_beforesync");
+  atomKK->modified(execution_space, datamask_modify);
+  atomKK->sync(execution_space, datamask_modify); 
+  debug_netF("after_dEdIJ_aftersync_beforecomm");
   communicationStage = 2;
   if (newton_pair) 
     {
@@ -351,14 +388,22 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
       comm->reverse_comm(this);
       k_dc6_v.template sync<DeviceType>();
     }
-  else 
-  {
-     k_dc6_v.template modify<DeviceType>();
-     comm->forward_comm(this);
-     k_dc6_v.template sync<DeviceType>();
+  k_dc6_v.template modify<DeviceType>();
+  comm->forward_comm(this);
+  k_dc6_v.template sync<DeviceType>();
+
+  //debug_netF("after_dEdIJ_aftersync_aftercomm");
+  //atomKK->sync(execution_space, F_MASK);
+  //debug_netF("after_dEdIJ_aftersync_aftercomm_aftersecondcomm");
+  #if defined(D3K_DEBUG_DC6) && !defined(KOKKOS_ENABLE_CUDA)
+  atomKK->sync(Host, 0); // ensure host mirrors fresh
+  if (comm->me==0) {
+    int imax = std::min(5, nlocal);
+    for (int i=0;i<imax;i++) printf("[DC6] i=%d dc6=%.6e\n", i, (double)k_dc6_v.h_view(i));
   }
-  
-  atomKK->sync(execution_space, F_MASK);
+  #endif  
+
+
   // compute kernel 2
   if (evflag)
   {
@@ -373,14 +418,26 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     Kokkos::parallel_for(
       policyInstance<TagPairDispDD3dEdXYZ<HALF, 1, 0>>::get(inum),*this);
   }
-
+  debug_netF("after_dEdXYZ_beforesync");
   // final syncs
-  atomKK->modified(execution_space, datamask_modify);
+  //atomKK->modified(execution_space, datamask_modify);
+  //debug_netF("after_dEdXYZ_beforesync_aftermod_beforesync");
   if (vflag_fdotr) pair_virial_fdotr_compute(this);
+   
+  if (eflag_atom) {
+    k_eatom.template modify<DeviceType>();
+    k_eatom.template sync<LMPHostType>();
+  }
+  if (vflag_atom) {
+    k_vatom.template modify<DeviceType>();
+    k_vatom.template sync<LMPHostType>();
+  }
+
   copymode = 0;
-  if constexpr (!std::is_same_v<DeviceType, LMPHostType>) {
-    atomKK->sync(Host, F_MASK);
-  } 
+  //if constexpr (!std::is_same_v<DeviceType, LMPHostType>) {
+  //  atomKK->sync(Host, F_MASK);
+  //} 
+  //debug_netF("after_dEdXYZ_beforesync_aftermod_beforesync_aftersync");
 }
 
 
@@ -1347,6 +1404,9 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   TagPairDispDD3dEdIJModifiedBJDamping<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
 {
    
+  #if defined(D3K_DEBUG_BALANCE)
+   F_FLOAT sumJx = 0, sumJy = 0, sumJz = 0;
+  #endif
   // same logic as Original, different parameters setup in funcpar
 
   auto v_f_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_f),decltype(ndup_f)>::get(dup_f,ndup_f);
@@ -1425,7 +1485,10 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const F_FLOAT fx = dx * fpair;
     const F_FLOAT fy = dy * fpair;
     const F_FLOAT fz = dz * fpair;
-
+    #if defined(D3K_DEBUG_BALANCE)
+    sumJx += fx; sumJy += fy; sumJz += fz;
+    #endif
+    
     fix += fx; fiy += fy; fiz += fz;
     if (NEWTON_PAIR || j < nlocal) {
       a_f_scv(j,0) -= fx;
@@ -1435,6 +1498,16 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
 
     if (EVFLAG) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
   }
+  #if defined(D3K_DEBUG_BALANCE) && !defined(KOKKOS_ENABLE_CUDA)
+  const double mx = fabs((double)fix - (double)sumJx);
+  const double my = fabs((double)fiy - (double)sumJy);
+  const double mz = fabs((double)fiz - (double)sumJz);
+  if (mx>1e-12 || my>1e-12 || mz>1e-12) {
+    printf("BJ DAMPING [BAL] step=%lld i=%d mx=%.3e my=%.3e mz=%.3e jnum=%d\n",
+           (long long)update->ntimestep, i, mx, my, mz, d_numneigh(i));
+  }
+  #endif
+
 
   a_f_scv(i, 0) += fix;
   a_f_scv(i, 1) += fiy;
