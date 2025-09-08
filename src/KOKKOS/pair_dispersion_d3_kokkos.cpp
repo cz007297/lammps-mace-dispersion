@@ -378,9 +378,9 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     
   }
   debug_netF("after_dEdIJ_beforesync");
-  atomKK->modified(execution_space, datamask_modify);
-  atomKK->sync(execution_space, datamask_modify); 
-  debug_netF("after_dEdIJ_aftersync_beforecomm");
+  //atomKK->modified(execution_space, datamask_modify);
+  //atomKK->sync(execution_space, datamask_modify); 
+  //debug_netF("after_dEdIJ_aftersync_beforecomm");
   communicationStage = 2;
   if (newton_pair) 
     {
@@ -433,10 +433,11 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     k_vatom.template sync<LMPHostType>();
   }
 
+  //atomKK->sync(execution_space, F_MASK);
   copymode = 0;
-  //if constexpr (!std::is_same_v<DeviceType, LMPHostType>) {
-  //  atomKK->sync(Host, F_MASK);
-  //} 
+  if constexpr (!std::is_same_v<DeviceType, LMPHostType>) {
+    atomKK->sync(Host, F_MASK);
+  } 
   //debug_netF("after_dEdXYZ_beforesync_aftermod_beforesync_aftersync");
 }
 
