@@ -69,131 +69,92 @@ PairDispersionD3Kokkos<DeviceType>::~PairDispersionD3Kokkos()
   allocated = 0;
 }
 
-// ...existing code...
 template<class DeviceType>
 double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j)
 {
-  // Let base class do mixing / set r0ab, cutsq, etc. for (i,j)
-  double cut = PairDispersionD3::init_one(i,j);
-
-  const int ntypes = atom->ntypes;
-
-  // Allocate DualViews once (first call)
-  if (!k_r0ab_v.span()) {
-    k_mxci_v  = DAT::tdual_float_1d("k_mxci", ntypes+1);
-    k_r2r4_v  = DAT::tdual_float_1d("k_r2r4", ntypes+1);
-    k_rcov_v  = DAT::tdual_float_1d("k_rcov", ntypes+1);
-    k_r0ab_v  = DAT::tdual_float_2d("k_r0ab", ntypes+1, ntypes+1);
-    k_cutsq_v = DAT::tdual_float_2d("k_cutsq", ntypes+1, ntypes+1);
-
-    // Inner grid dims are fixed to 5x5x3 in this build
-    k_c6ab_v  = tdual_float_5d("k_c6ab", ntypes+1, ntypes+1, 5, 5, 3);
-
-    // Fill 1D arrays (type properties) once on host
-    for (int t = 0; t <= ntypes; ++t) {
-      k_mxci_v.h_view(t)  = mxci[t];
-      k_r2r4_v.h_view(t)  = r2r4[t];
-      k_rcov_v.h_view(t)  = rcov[t];
-    }
-  }
-
-  // For this (i,j) we can fill r0ab and cutsq immediately
-  // r0ab comes from base; cutsq is derived from cut for this pair
-  k_r0ab_v.h_view(i,j) = r0ab[i][j];
-  k_r0ab_v.h_view(j,i) = r0ab[j][i];
-
-  const float cutsq_local = static_cast<float>(cut * cut);
-  k_cutsq_v.h_view(i,j) = cutsq_local;
-  k_cutsq_v.h_view(j,i) = cutsq_local;
-
-  // If this is the last init_one call, populate the FULL tables and sync once
-  if (i == ntypes && j == ntypes) {
-    // Fill all r0ab and cutsq from the base class arrays for every (t1,t2)
-    for (int t1 = 1; t1 <= ntypes; ++t1) {
-      for (int t2 = 1; t2 <= ntypes; ++t2) {
-        k_r0ab_v.h_view(t1,t2) = r0ab[t1][t2];
-        k_r0ab_v.h_view(t2,t1) = r0ab[t2][t1]; //symmetry
-        k_cutsq_v.h_view(t1,t2) = static_cast<float>(cutsq[t1][t2]);
-        k_cutsq_v.h_view(t2,t1) = static_cast<float>(cutsq[t2][t1]);
-
-
-        // Fill C6 grid blocks for all (t1,t2) from the base class c6ab array
-        for (int a = 1; a < ntypes; ++a){
-          for (int b = 1; b < ntypes; ++b){
-            for (int g1 =0; g1 < 5; ++g1){
-              for (int g2 =0; g2 < 5; ++g2){
-                for (int k =0; k < 3; ++k){
-                  k_c6ab_v.h_view(b, a, g2, g1, k) = c6ab[b][a][g2][g1][k];
-                  k_c6ab_v.h_view(a, b, g1, g2, k) = c6ab[a][b][g1][g2][k]; // ensure symmetry
-                }
-              }
-            }
-          }
-        }
-
-
-
-
-        // Use the base Pair::cutsq if available (it has been set across init_one calls)
-        // Fallback to previous value if uninitialized.
-        const F_FLOAT csq = this->cutsq ? this->cutsq[t1][t2] : static_cast<double>(k_cutsq_v.h_view(t1,t2));
-        k_cutsq_v.h_view(t1,t2) = static_cast<float>(csq);
-
-        // Copy the C6 grid block for this (t1,t2)
-        const int Gi = std::min<int>(mxci[t1] + 1, k_c6ab_v.extent(2)); // cap by 5
-        const int Gj = std::min<int>(mxci[t2] + 1, k_c6ab_v.extent(3)); // cap by 5
-        for (int gi = 0; gi < Gi; ++gi) {
-          for (int gj = 0; gj < Gj; ++gj) {
-            // channels: 0=c6_ref (in a.u.), 1=cni_ref, 2=cnj_ref
-            k_c6ab_v.h_view(t1,t2,gi,gj,0) = c6ab[t1][t2][gi][gj][0];
-            k_c6ab_v.h_view(t1,t2,gi,gj,1) = c6ab[t1][t2][gi][gj][1];
-            k_c6ab_v.h_view(t1,t2,gi,gj,2) = c6ab[t1][t2][gi][gj][2];
-
-            // Ensure symmetric block is present too (swap gi/gj when swapping t1/t2)
-            k_c6ab_v.h_view(t2,t1,gj,gi,0) = c6ab[t2][t1][gj][gi][0];
-            k_c6ab_v.h_view(t2,t1,gj,gi,1) = c6ab[t2][t1][gj][gi][1];
-            k_c6ab_v.h_view(t2,t1,gj,gi,2) = c6ab[t2][t1][gj][gi][2];
-          }
-        }
-      }
-    }
-
-    // Push all host mirrors to device once
-    k_mxci_v.modify_host();   k_mxci_v.template sync<DeviceType>();
-    k_r2r4_v.modify_host();   k_r2r4_v.template sync<DeviceType>();
-    k_rcov_v.modify_host();   k_rcov_v.template sync<DeviceType>();
-    k_r0ab_v.modify_host();   k_r0ab_v.template sync<DeviceType>();
-    k_cutsq_v.modify_host();  k_cutsq_v.template sync<DeviceType>();
-    k_c6ab_v.modify_host();   k_c6ab_v.template sync<DeviceType>();
-
-    // Bind device views for kernels
-    d_mxci_v  = k_mxci_v.template view<DeviceType>();
-    d_r2r4_v  = k_r2r4_v.template view<DeviceType>();
-    d_rcov_v  = k_rcov_v.template view<DeviceType>();
-    d_r0ab_v  = k_r0ab_v.template view<DeviceType>();
-    d_cutsq_v = k_cutsq_v.template view<DeviceType>();
-    d_c6ab_v  = k_c6ab_v.template view<DeviceType>();
-  }
-
-  return cut;
+  return PairDispersionD3::init_one(i,j);
 }
-
-template<class DeviceType>
-void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
-{
-  PairDispersionD3::coeff(narg,arg);
-}
-
 
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::init_style()
 {
   PairDispersionD3::init_style();
 
+  // new function/method
+  sync_arrays_device();
+  
   // Adjust neighbor list request for KOKKOS
   auto request = neighbor->find_request(this);
   request->set_kokkos_host(std::is_same_v<DeviceType,LMPHostType> && !std::is_same_v<DeviceType,LMPDeviceType>);
   request->set_kokkos_device(std::is_same_v<DeviceType,LMPDeviceType>);
+
+}
+
+template<class DeviceType>
+void PairDispersionD3Kokkos<DeviceType>::sync_arrays_device()
+{
+  const int ntypes = atom->ntypes;
+    // Allocate all arrays once
+  k_mxci_v  = DAT::tdual_float_1d("k_mxci", ntypes+1);
+  k_r2r4_v  = DAT::tdual_float_1d("k_r2r4", ntypes+1);
+  k_rcov_v  = DAT::tdual_float_1d("k_rcov", ntypes+1);
+  k_r0ab_v  = DAT::tdual_float_2d("k_r0ab", ntypes+1, ntypes+1);
+  k_cutsq_v = DAT::tdual_float_2d("k_cutsq", ntypes+1, ntypes+1);
+  k_c6ab_v  = tdual_float_5d("k_c6ab", ntypes+1, ntypes+1, 5, 5, 3);
+
+  // Fill 1D arrays
+  for (int t = 0; t <= ntypes; ++t) {
+    k_mxci_v.h_view(t) = mxci[t];
+    k_r2r4_v.h_view(t) = r2r4[t];
+    k_rcov_v.h_view(t) = rcov[t];
+  }
+  
+  
+  // Fill 2D arrays
+  for (int i = 1; i <= ntypes; ++i) {
+    for (int j = 1; j <= ntypes; ++j) {
+      k_r0ab_v.h_view(i,j) = r0ab[i][j];
+      k_cutsq_v.h_view(i,j) = cutsq[i][j];
+    }
+  }
+
+  // Fill C6 arrays with symmetry
+  for (int t1 = 1; t1 <= ntypes; ++t1) {
+    for (int t2 = 1; t2 <= ntypes; ++t2) {
+      const int Gi = std::min<int>(mxci[t1] + 1, 5);
+      const int Gj = std::min<int>(mxci[t2] + 1, 5);
+      for (int gi = 0; gi < Gi; ++gi) {
+        for (int gj = 0; gj < Gj; ++gj) {
+          for (int k = 0; k < 3; ++k) {
+            k_c6ab_v.h_view(t1, t2, gi, gj, k) = c6ab[t1][t2][gi][gj][k];
+          }
+        }
+      }
+    }
+  }
+
+  // Sync all to device
+  k_mxci_v.modify_host();   k_mxci_v.template sync<DeviceType>();
+  k_r2r4_v.modify_host();   k_r2r4_v.template sync<DeviceType>();
+  k_rcov_v.modify_host();   k_rcov_v.template sync<DeviceType>();
+  k_r0ab_v.modify_host();   k_r0ab_v.template sync<DeviceType>();
+  k_cutsq_v.modify_host();  k_cutsq_v.template sync<DeviceType>();
+  k_c6ab_v.modify_host();   k_c6ab_v.template sync<DeviceType>();
+
+  // Bind device views
+  d_mxci_v  = k_mxci_v.template view<DeviceType>();
+  d_r2r4_v  = k_r2r4_v.template view<DeviceType>();
+  d_rcov_v  = k_rcov_v.template view<DeviceType>();
+  d_r0ab_v  = k_r0ab_v.template view<DeviceType>();
+  d_cutsq_v = k_cutsq_v.template view<DeviceType>();
+  d_c6ab_v  = k_c6ab_v.template view<DeviceType>();
+
+}
+
+template<class DeviceType>
+void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
+{
+  PairDispersionD3::coeff(narg,arg);
 }
 
 template<class DeviceType>
