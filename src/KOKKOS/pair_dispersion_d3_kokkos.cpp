@@ -68,13 +68,13 @@ PairDispersionD3Kokkos<DeviceType>::~PairDispersionD3Kokkos()
   vatom = nullptr;
   allocated = 0;
 }
-
+/*
 template<class DeviceType>
 double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j)
 {
   return PairDispersionD3::init_one(i,j);
 }
-
+*/
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::init_style()
 {
@@ -197,6 +197,17 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   std::unordered_map<std::string, int> dampingMap = {
       {"original", 1}, {"zerom", 2}, {"bj", 3}, {"bjm",4}};
   int dampingCode = dampingMap[damping_type];
+  if (comm->me == 0 && update->ntimestep <= 3) {
+    fprintf(stderr, "STEP %lld: damping_type='%s' -> dampingCode=%d\n", 
+          (long long)update->ntimestep, damping_type.c_str(), dampingCode);
+    fprintf(stderr, "  Functional params: s6=%.6f s8=%.6f\n", s6, s8);
+  if (dampingCode >= 3) {
+    fprintf(stderr, "  BJ params: a1=%.6f a2=%.6f\n", a1, a2);
+  } else {
+    fprintf(stderr, "  Zero params: rs6=%.6f rs8=%.6f alpha=%.6f\n", rs6, rs8, alpha);
+    }
+  }  
+
   
   int eflag = eflag_in;
   int vflag = vflag_in;
@@ -324,7 +335,10 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   // Main Kernels Switch Logic Here - NEWTON_PAIR hardcoded to one by design 
   // compute kernel 1
   switch (dampingCode) {
-    case 1: { 
+    case 1: {
+      if (comm->me == 0 && update->ntimestep <= 1) {
+        fprintf(stderr, "  EXECUTING: Original Zero Damping Kernel\n");
+      } 
       if (evflag)
       {
         EV_FLOAT ev;
@@ -352,7 +366,10 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
           policyInstance<TagPairDispDD3dEdIJModifiedZeroDampKernel<HALF, 1, 0>>::get(inum), *this);
       }
      } break;
-    case 3: { 
+    case 3: {
+      if (comm->me == 0 && update->ntimestep <= 1) {
+        fprintf(stderr, "  EXECUTING: Original BJ Damping Kernel\n");
+      } 
       if (evflag)
       {
         EV_FLOAT ev;

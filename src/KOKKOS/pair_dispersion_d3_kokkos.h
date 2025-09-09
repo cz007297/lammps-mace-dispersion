@@ -66,7 +66,7 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     void compute(int eflag, int vflag) override; 
     void coeff(int, char**) override;
     void init_style() override;  
-    double init_one(int i, int j) override;  
+    //double init_one(int i, int j) override;  
     void sync_arrays_device(); 
      // Main computation operators
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
