@@ -148,6 +148,23 @@ void PairDispersionD3Kokkos<DeviceType>::sync_arrays_device()
   d_r0ab_v  = k_r0ab_v.template view<DeviceType>();
   d_cutsq_v = k_cutsq_v.template view<DeviceType>();
   d_c6ab_v  = k_c6ab_v.template view<DeviceType>();
+  if (comm->me == 0) {
+    int ntypes = atom->ntypes;
+    fprintf(stderr, "KOKKOS SYNC DEBUG: ntypes=%d\n", ntypes);
+    for (int t = 1; t <= ntypes; t++) {
+      fprintf(stderr, "  KOKKOS r2r4[%d]=%.6f rcov[%d]=%.6f mxci[%d]=%d\n", 
+              t, (double)k_r2r4_v.h_view(t), t, (double)k_rcov_v.h_view(t), t, (int)k_mxci_v.h_view(t));
+    }
+    
+    // Sample values
+    for (int i = 1; i <= ntypes && i <= 2; i++) {
+      for (int j = 1; j <= ntypes && j <= 2; j++) {
+        fprintf(stderr, "  KOKKOS r0ab[%d][%d]=%.6f\n", i, j, (double)k_r0ab_v.h_view(i,j));
+        fprintf(stderr, "  KOKKOS c6ab[%d][%d][0][0][0]=%.6e\n", i, j, (double)k_c6ab_v.h_view(i,j,0,0,0));
+      }
+    }
+  }
+
 
 }
 
@@ -502,31 +519,31 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3KokkosCNDC6Kernel<
   const int     itype  = d_type(i);
   if (itype <= 0 || itype >= d_rcov_v.extent(0)) return; 
   const int     jnum   = d_numneigh[i];
-  const F_FLOAT xi     = d_x(i,0);
-  const F_FLOAT yi     = d_x(i,1);
-  const F_FLOAT zi     = d_x(i,2);
+  const double xi     = d_x(i,0);
+  const double yi     = d_x(i,1);
+  const double zi     = d_x(i,2);
 
   for (int jj = 0; jj < jnum; jj++)
   {
     int j                = d_neighbors(i, jj) & NEIGHMASK; 
     const int     jtype  = d_type(j); 
     if (jtype <= 0 || jtype >= d_rcov_v.extent(0)) continue;
-    const F_FLOAT xj     = d_x(j,0);
-    const F_FLOAT yj     = d_x(j,1);
-    const F_FLOAT zj     = d_x(j,2);
+    const double xj     = d_x(j,0);
+    const double yj     = d_x(j,1);
+    const double zj     = d_x(j,2);
     
-    const F_FLOAT xij    = xi - xj;
-    const F_FLOAT yij    = yi - yj;
-    const F_FLOAT zij    = zi - zj;
+    const double xij    = xi - xj;
+    const double yij    = yi - yj;
+    const double zij    = zi - zj;
 
-    const F_FLOAT rsq    = xij*xij + yij*yij + zij*zij; 
+    const double rsq    = xij*xij + yij*yij + zij*zij; 
 
     // if the atoms are too far away don't consider the contribution
     if (rsq > cn_thr) continue; 
 
-    const F_FLOAT rr      = sqrt(rsq);
-    const F_FLOAT rcov_ij = (d_rcov_v(itype) + d_rcov_v(jtype)) * autoang;
-    const F_FLOAT cn_ij   = 1.0f / (1.0f + expf(-K1 * ((rcov_ij / rr) - 1.0f)));
+    const double rr      = sqrt(rsq);
+    const double rcov_ij = (d_rcov_v(itype) + d_rcov_v(jtype)) * autoang;
+    const double cn_ij   = 1.0f / (1.0f + expf(-K1 * ((rcov_ij / rr) - 1.0f)));
 
     a_cn_scv(i) += cn_ij;
     if (newton_pair || j < nlocal) a_cn_scv(j) += cn_ij; 
@@ -586,13 +603,13 @@ struct DC6Derive
     c6_ref *= autoev * pow(autoang, 6);
     if (c6_ref <= 0.0) return; 
    
-    const F_FLOAT  cni_ref  = d_c6ab_v(iat, jat, ci, cj, 1);
-    const F_FLOAT  cnj_ref  = d_c6ab_v(iat, jat, ci, cj, 2);
+    const double  cni_ref  = d_c6ab_v(iat, jat, ci, cj, 1);
+    const double  cnj_ref  = d_c6ab_v(iat, jat, ci, cj, 2);
   
-    const F_FLOAT    dx_i  = cni - cni_ref;
-    const F_FLOAT    dx_j  = cnj - cnj_ref; 
+    const double    dx_i  = cni - cni_ref;
+    const double    dx_j  = cnj - cnj_ref; 
 
-    const F_FLOAT       r  = dx_i*dx_i  + dx_j*dx_j;
+    const double       r  = dx_i*dx_i  + dx_j*dx_j;
   
     if ( r < acc.r_save) { acc.r_save = r; acc.c6mem = c6_ref; }
   
@@ -601,8 +618,8 @@ struct DC6Derive
     acc.den              += expterm;
 
     expterm              *= 2.0 * K3;
-    const F_FLOAT  term_i  = expterm * dx_i;
-    const F_FLOAT  term_j  = expterm * dx_j;
+    const double  term_i  = expterm * dx_i;
+    const double  term_j  = expterm * dx_j;
     acc.dnum_i           += c6_ref * term_i;
     acc.dden_i           += term_i;
     acc.dnum_j           += c6_ref * term_j;
@@ -628,7 +645,7 @@ KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::dC6KK
 (
   const    int iat, const    int jat,
-  const F_FLOAT cni, const F_FLOAT cnj,
+  const double cni, const double cnj,
   double &C6, double &dC6_dCNi, double &dC6_dCNj
 ) const
 {
@@ -674,9 +691,9 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZKernel<N
   if (ii >= inum) return;
   const int i = d_ilist[ii];
   if (i >= nlocal) return ; 
-  const F_FLOAT  xi = d_x(i,0);
-  const F_FLOAT  yi = d_x(i,1);
-  const F_FLOAT  zi = d_x(i,2);
+  const double  xi = d_x(i,0);
+  const double  yi = d_x(i,1);
+  const double  zi = d_x(i,2);
   const int itype = d_type(i);
 
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
@@ -686,33 +703,33 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZKernel<N
   for (int jj = 0; jj < jnum; ++jj) 
   {
     const int jfull = d_neighbors(i,jj);
-    const F_FLOAT factor_lj = special_lj[sbmask_disp(jfull)]; 
+    const double factor_lj = special_lj[sbmask_disp(jfull)]; 
     const int j = jfull & NEIGHMASK;
     const int jtype = d_type(j);
 
-    const F_FLOAT  dx = xi - d_x(j,0);
-    const F_FLOAT  dy = yi - d_x(j,1);
-    const F_FLOAT  dz = zi - d_x(j,2);
-    const F_FLOAT  rsq = dx*dx + dy*dy + dz*dz;
+    const double  dx = xi - d_x(j,0);
+    const double  dy = yi - d_x(j,1);
+    const double  dz = zi - d_x(j,2);
+    const double  rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq < d_cutsq_v(itype, jtype)) 
     {
-      const F_FLOAT r = sqrt(rsq);
+      const double r = sqrt(rsq);
       
       F_FLOAT dcn = 0.0;
       if (rsq < cn_thr)
       { 
-        const F_FLOAT  rcovij  = (d_rcov_v(itype) + d_rcov_v(jtype))*autoang;
-        const F_FLOAT  expterm = exp(-K1 * (rcovij / r - 1.0));
+        const double  rcovij  = (d_rcov_v(itype) + d_rcov_v(jtype))*autoang;
+        const double  expterm = exp(-K1 * (rcovij / r - 1.0));
         dcn = -K1 * rcovij * expterm / (rsq * (expterm + 1.0) * (expterm + 1.0));
       } 
 
-      const F_FLOAT  fpair1 = dcn * (d_dc6_v(i) + d_dc6_v(j)) / r ; 
-      const F_FLOAT  fpair  = fpair1*factor_lj;
+      const double  fpair1 = dcn * (d_dc6_v(i) + d_dc6_v(j)) / r ; 
+      const double  fpair  = fpair1*factor_lj;
      
-      const F_FLOAT  fx = dx * fpair;
-      const F_FLOAT  fy = dy * fpair; 
-      const F_FLOAT  fz = dz * fpair;
+      const double  fx = dx * fpair;
+      const double  fy = dy * fpair; 
+      const double  fz = dz * fpair;
     
       fix += fx;
       fiy += fy;
@@ -1016,8 +1033,8 @@ template<class DeviceType>
 template<int NEIGHFLAG, int NEWTON_PAIR>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::ev_tally(EV_FLOAT &ev, const int &i, const int &j,
-      const F_FLOAT &epair, const F_FLOAT &fpair, const F_FLOAT &delx,
-                const F_FLOAT &dely, const F_FLOAT &delz) const
+      const double &epair, const double &fpair, const double &delx,
+                const double &dely, const double &delz) const
 {
   const int EFLAG = eflag_either;
   const int VFLAG = vflag_either && !vflag_fdotr;;
@@ -1124,74 +1141,74 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   const int itype = d_type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
-  const F_FLOAT xi = d_x(i,0);
-  const F_FLOAT yi = d_x(i,1);
-  const F_FLOAT zi = d_x(i,2);
+  const double xi = d_x(i,0);
+  const double yi = d_x(i,1);
+  const double zi = d_x(i,2);
 
   double fix = 0.0, fiy = 0.0, fiz = 0.0;
 
   const int jnum = d_numneigh[i];
   for (int jj = 0; jj < jnum; ++jj) {
     const int jfull = d_neighbors(i,jj);
-    const F_FLOAT factor_lj = special_lj[sbmask_disp(jfull)];
+    const double factor_lj = special_lj[sbmask_disp(jfull)];
     const int j = jfull & NEIGHMASK;
     const int jtype = d_type(j);
     if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue; 
 
-    const F_FLOAT dx  = xi - d_x(j,0);
-    const F_FLOAT dy  = yi - d_x(j,1);
-    const F_FLOAT dz  = zi - d_x(j,2);
-    const F_FLOAT rsq = dx*dx + dy*dy + dz*dz;
+    const double dx  = xi - d_x(j,0);
+    const double dy  = yi - d_x(j,1);
+    const double dz  = zi - d_x(j,2);
+    const double rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq >= d_cutsq_v(itype,jtype)) continue;
 
-    const F_FLOAT r      = sqrt(rsq);
-    const F_FLOAT r2inv  = 1.0 / rsq;
-    const F_FLOAT r4inv  = r2inv * r2inv;
-    const F_FLOAT r6inv  = r4inv * r2inv;
-    const F_FLOAT r8inv  = r6inv * r2inv;
-    const F_FLOAT r10inv = r8inv * r2inv;
+    const double r      = sqrt(rsq);
+    const double r2inv  = 1.0 / rsq;
+    const double r4inv  = r2inv * r2inv;
+    const double r6inv  = r4inv * r2inv;
+    const double r8inv  = r6inv * r2inv;
+    const double r10inv = r8inv * r2inv;
 
-    const F_FLOAT cni = d_cn_v(i);
-    const F_FLOAT cnj = d_cn_v(j);
+    const double cni = d_cn_v(i);
+    const double cnj = d_cn_v(j);
 
     double C6=0.0, dC6_i=0.0, dC6_j=0.0;
     dC6KK(itype, jtype, cni, cnj, C6, dC6_i, dC6_j);
     if (C6 == 0.0) continue;
 
-    const F_FLOAT C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
+    const double C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
 
-    const F_FLOAT r0     = r / d_r0ab_v(itype, jtype);
-    const F_FLOAT alpha6 = alpha;
-    const F_FLOAT alpha8 = alpha + 2.0;
+    const double r0     = r / d_r0ab_v(itype, jtype);
+    const double alpha6 = alpha;
+    const double alpha8 = alpha + 2.0;
 
-    const F_FLOAT t6    = pow(rs6 / r0, alpha6);
-    const F_FLOAT damp6 = 1.0 / (1.0 + 6.0 * t6);
-    const F_FLOAT t8    = pow(rs8 / r0, alpha8);
-    const F_FLOAT damp8 = 1.0 / (1.0 + 6.0 * t8);
+    const double t6    = pow(rs6 / r0, alpha6);
+    const double damp6 = 1.0 / (1.0 + 6.0 * t6);
+    const double t8    = pow(rs8 / r0, alpha8);
+    const double damp8 = 1.0 / (1.0 + 6.0 * t8);
 
-    const F_FLOAT e6 = C6 * damp6 * r6inv;
-    const F_FLOAT e8 = C8 * damp8 * r8inv;
+    const double e6 = C6 * damp6 * r6inv;
+    const double e8 = C8 * damp8 * r8inv;
 
-    const F_FLOAT tmp6 = 6.0 * s6 * C6 * r8inv  * damp6;
-    const F_FLOAT tmp8 = 8.0 * s8 * C8 * r10inv * damp8;
+    const double tmp6 = 6.0 * s6 * C6 * r8inv  * damp6;
+    const double tmp8 = 8.0 * s8 * C8 * r10inv * damp8;
 
-    const F_FLOAT fpair_no_damp = -(tmp6 + tmp8);
-    const F_FLOAT fpair_damp    =  (tmp6 * alpha6 * t6 * damp6)
+    const double fpair_no_damp = -(tmp6 + tmp8);
+    const double fpair_damp    =  (tmp6 * alpha6 * t6 * damp6)
                                 + (tmp8 * alpha8 * t8 * damp8 * 0.75);
-    const F_FLOAT fpair = (fpair_no_damp + fpair_damp) * factor_lj;
+    const double fpair = (fpair_no_damp + fpair_damp) * factor_lj;
 
-    const F_FLOAT phi = -(s6 * e6 + s8 * e8) * factor_lj;
+    const double phi = -(s6 * e6 + s8 * e8) * factor_lj;
 
-    const F_FLOAT rest = (s6 * e6 + s8 * e8) / C6;
+    const double rest = (s6 * e6 + s8 * e8) / C6;
     
     a_dc6_scv(i) += rest*dC6_i;
     if (NEWTON_PAIR || j < nlocal)
       a_dc6_scv(j) += rest*dC6_j;
 
-    const F_FLOAT fx = dx * fpair;
-    const F_FLOAT fy = dy * fpair;
-    const F_FLOAT fz = dz * fpair;
+    const double fx = dx * fpair;
+    const double fy = dy * fpair;
+    const double fz = dz * fpair;
     
     fix += fx;
     fiy += fy;
@@ -1242,77 +1259,77 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   const int itype = d_type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
-  const F_FLOAT xi = d_x(i,0);
-  const F_FLOAT yi = d_x(i,1);
-  const F_FLOAT zi = d_x(i,2);
+  const double xi = d_x(i,0);
+  const double yi = d_x(i,1);
+  const double zi = d_x(i,2);
 
   double fix = 0.0, fiy = 0.0, fiz = 0.0;
 
   const int jnum = d_numneigh[i];
   for (int jj = 0; jj < jnum; ++jj) {
     const int jfull = d_neighbors(i,jj);
-    const F_FLOAT factor_lj = special_lj[sbmask_disp(jfull)];
+    const double factor_lj = special_lj[sbmask_disp(jfull)];
     const int j = jfull & NEIGHMASK;
     const int jtype = d_type(j);
     if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue;
 
-    const F_FLOAT dx  = xi - d_x(j,0);
-    const F_FLOAT dy  = yi - d_x(j,1);
-    const F_FLOAT dz  = zi - d_x(j,2);
-    const F_FLOAT rsq = dx*dx + dy*dy + dz*dz;
+    const double dx  = xi - d_x(j,0);
+    const double dy  = yi - d_x(j,1);
+    const double dz  = zi - d_x(j,2);
+    const double rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq >= d_cutsq_v(itype,jtype)) continue;
 
-    const F_FLOAT r      = sqrt(rsq);
-    const F_FLOAT r2inv  = 1.0 / rsq;
-    const F_FLOAT r4inv  = r2inv * r2inv;
-    const F_FLOAT r6inv  = r4inv * r2inv;
-    const F_FLOAT r8inv  = r6inv * r2inv;
-    const F_FLOAT r10inv = r8inv * r2inv;
+    const double r      = sqrt(rsq);
+    const double r2inv  = 1.0 / rsq;
+    const double r4inv  = r2inv * r2inv;
+    const double r6inv  = r4inv * r2inv;
+    const double r8inv  = r6inv * r2inv;
+    const double r10inv = r8inv * r2inv;
 
-    const F_FLOAT cni = d_cn_v(i);
-    const F_FLOAT cnj = d_cn_v(j);
+    const double cni = d_cn_v(i);
+    const double cnj = d_cn_v(j);
 
     double C6=0.0, dC6_i=0.0, dC6_j=0.0;
     dC6KK(itype, jtype, cni, cnj, C6, dC6_i, dC6_j);
     if (C6 == 0.0) continue;
 
-    const F_FLOAT C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
+    const double C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
 
-    const F_FLOAT r0     = d_r0ab_v(itype, jtype);
-    const F_FLOAT alpha6 = alpha;
-    const F_FLOAT alpha8 = alpha + 2.0;
+    const double r0     = d_r0ab_v(itype, jtype);
+    const double alpha6 = alpha;
+    const double alpha8 = alpha + 2.0;
 
-    const F_FLOAT t6     = pow((r / (rs6*r0))+rs8*r0, -alpha6);
-    const F_FLOAT t8     = pow((r/r0)+rs8*r0, -alpha8);
-    const F_FLOAT damp6  = 1.0 / ( 1.0 + (6.0*t6));
-    const F_FLOAT damp8  = 1.0 / ( 1.0 + (6.0*t8));
+    const double t6     = pow((r / (rs6*r0))+rs8*r0, -alpha6);
+    const double t8     = pow((r/r0)+rs8*r0, -alpha8);
+    const double damp6  = 1.0 / ( 1.0 + (6.0*t6));
+    const double damp8  = 1.0 / ( 1.0 + (6.0*t8));
    
-    const F_FLOAT e6     = C6 * damp6 * r6inv;
-    const F_FLOAT e8     = C8 * damp8 * r8inv;
+    const double e6     = C6 * damp6 * r6inv;
+    const double e8     = C8 * damp8 * r8inv;
 
-    const F_FLOAT tmp6   = 6.0 * s6 * C6 * r8inv  * damp6;   
-    const F_FLOAT tmp8   = 8.0 * s8 * C8 * r10inv * damp8;
+    const double tmp6   = 6.0 * s6 * C6 * r8inv  * damp6;   
+    const double tmp8   = 8.0 * s8 * C8 * r10inv * damp8;
 
-    const F_FLOAT fpair1   = -(tmp6 + tmp8);
+    const double fpair1   = -(tmp6 + tmp8);
  
-    const F_FLOAT fp26     = tmp6 * alpha6 * t6 * damp6 * r / (r+rs6*rs8*r0*r0);
-    const F_FLOAT fp28     = tmp8 * alpha8 * t8 * damp8 * r / (r+rs6*r0*r0);
+    const double fp26     = tmp6 * alpha6 * t6 * damp6 * r / (r+rs6*rs8*r0*r0);
+    const double fp28     = tmp8 * alpha8 * t8 * damp8 * r / (r+rs6*r0*r0);
 
-    const F_FLOAT fpair2   = fp26 + (0.75 *fp28);
-    const F_FLOAT fpair    = (fpair1 + fpair2) * factor_lj; 
+    const double fpair2   = fp26 + (0.75 *fp28);
+    const double fpair    = (fpair1 + fpair2) * factor_lj; 
     
-    const F_FLOAT phi = -(s6 * e6 + s8 * e8) * factor_lj;
+    const double phi = -(s6 * e6 + s8 * e8) * factor_lj;
 
-    const F_FLOAT rest = (s6 * e6 + s8 * e8) / C6;
+    const double rest = (s6 * e6 + s8 * e8) / C6;
     
     a_dc6_scv(i) += rest*dC6_i;
     if (NEWTON_PAIR || j < nlocal)
       a_dc6_scv(j) += rest*dC6_j;
 
-    const F_FLOAT fx = dx * fpair;
-    const F_FLOAT fy = dy * fpair;
-    const F_FLOAT fz = dz * fpair;
+    const double fx = dx * fpair;
+    const double fy = dy * fpair;
+    const double fz = dz * fpair;
 
     fix += fx; fiy += fy; fiz += fz; 
     if (NEWTON_PAIR || j < nlocal) {
@@ -1366,59 +1383,59 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   const int itype = d_type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
-  const F_FLOAT xi = d_x(i,0);
-  const F_FLOAT yi = d_x(i,1);
-  const F_FLOAT zi = d_x(i,2);
+  const double xi = d_x(i,0);
+  const double yi = d_x(i,1);
+  const double zi = d_x(i,2);
 
 
   const int jnum = d_numneigh[i];
   for (int jj = 0; jj < jnum; ++jj) {
     const int jfull = d_neighbors(i,jj);
-    const F_FLOAT factor_lj = special_lj[sbmask_disp(jfull)];
+    const double factor_lj = special_lj[sbmask_disp(jfull)];
     const int j = jfull & NEIGHMASK;
     const int jtype = d_type(j);
     if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue;
 
-    const F_FLOAT  dx  = xi - d_x(j,0);
-    const F_FLOAT  dy  = yi - d_x(j,1);
-    const F_FLOAT  dz  = zi - d_x(j,2);
-    const F_FLOAT  rsq = dx*dx + dy*dy + dz*dz;
+    const double  dx  = xi - d_x(j,0);
+    const double  dy  = yi - d_x(j,1);
+    const double  dz  = zi - d_x(j,2);
+    const double  rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq >= d_cutsq_v(itype,jtype)) continue;
 
-    const F_FLOAT  r      = sqrt(rsq);
-    const F_FLOAT  cni = d_cn_v(i);
-    const F_FLOAT  cnj = d_cn_v(j);
+    const double  r      = sqrt(rsq);
+    const double  cni = d_cn_v(i);
+    const double  cnj = d_cn_v(j);
 
     F_FLOAT C6=0.0, dC6_i=0.0, dC6_j=0.0;
     dC6KK(itype, jtype, cni, cnj, C6, dC6_i, dC6_j);
     if (C6 == 0.0) continue;
 
-    const F_FLOAT   C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
-    const F_FLOAT   r0     = sqrt(C8/C6);
-    const F_FLOAT   r4     = rsq*rsq;
-    const F_FLOAT   r6     = rsq*rsq*rsq;
-    const F_FLOAT   r8     = rsq*rsq*rsq*rsq;
+    const double   C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
+    const double   r0     = sqrt(C8/C6);
+    const double   r4     = rsq*rsq;
+    const double   r6     = rsq*rsq*rsq;
+    const double   r8     = rsq*rsq*rsq*rsq;
 
     // ip - inner product 
-    const F_FLOAT   iptmp  = ((a1*r0)+a2);
-    const F_FLOAT   expt6  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
-    const F_FLOAT   expt8  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
-    const F_FLOAT   t6     = r6 + expt6 ;
-    const F_FLOAT   t8     = r8 + expt8 ; 
-    const F_FLOAT   e6     = C6/t6;
-    const F_FLOAT   e8     = C8/t8;
-    const F_FLOAT   tmp6   = (6.0 * s6 * C6 * r4) / (t6*t6);
-    const F_FLOAT   tmp8   = (8.0 * s8 * C8 * r6) / (t8*t8);
-    const F_FLOAT   fpairsum = -(tmp6 + tmp8);
-    const F_FLOAT   fpair    = fpairsum * factor_lj;
-    const F_FLOAT   phi = -(s6 * e6 + s8 * e8) * factor_lj;
-    const F_FLOAT   rest = (s6 * e6 + s8 * e8) / C6;
+    const double   iptmp  = ((a1*r0)+a2);
+    const double   expt6  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
+    const double   expt8  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
+    const double   t6     = r6 + expt6 ;
+    const double   t8     = r8 + expt8 ; 
+    const double   e6     = C6/t6;
+    const double   e8     = C8/t8;
+    const double   tmp6   = (6.0 * s6 * C6 * r4) / (t6*t6);
+    const double   tmp8   = (8.0 * s8 * C8 * r6) / (t8*t8);
+    const double   fpairsum = -(tmp6 + tmp8);
+    const double   fpair    = fpairsum * factor_lj;
+    const double   phi = -(s6 * e6 + s8 * e8) * factor_lj;
+    const double   rest = (s6 * e6 + s8 * e8) / C6;
     
 
-    const F_FLOAT  fx = dx * fpair;
-    const F_FLOAT  fy = dy * fpair;
-    const F_FLOAT  fz = dz * fpair;
+    const double  fx = dx * fpair;
+    const double  fy = dy * fpair;
+    const double  fz = dz * fpair;
 
     fix += fx; fiy += fy; fiz += fz;
     if (NEWTON_PAIR || j < nlocal) {
@@ -1480,70 +1497,79 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   const int itype = d_type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
-  const F_FLOAT xi = d_x(i,0);
-  const F_FLOAT yi = d_x(i,1);
-  const F_FLOAT zi = d_x(i,2);
+  const double xi = d_x(i,0);
+  const double yi = d_x(i,1);
+  const double zi = d_x(i,2);
 
   double fix = 0.0, fiy = 0.0, fiz = 0.0;
 
   const int jnum = d_numneigh[i];
   for (int jj = 0; jj < jnum; ++jj) {
     const int jfull = d_neighbors(i,jj);
-    const F_FLOAT factor_lj = special_lj[sbmask_disp(jfull)];
+    const double factor_lj = special_lj[sbmask_disp(jfull)];
     const int j = jfull & NEIGHMASK;
     const int jtype = d_type(j);
     if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue;
 
-    const F_FLOAT dx  = xi - d_x(j,0);
-    const F_FLOAT dy  = yi - d_x(j,1);
-    const F_FLOAT dz  = zi - d_x(j,2);
-    const F_FLOAT rsq = dx*dx + dy*dy + dz*dz;
+    const double dx  = xi - d_x(j,0);
+    const double dy  = yi - d_x(j,1);
+    const double dz  = zi - d_x(j,2);
+    const double rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq >= d_cutsq_v(itype,jtype)) continue;
 
-    const F_FLOAT r      = sqrt(rsq);
-    const F_FLOAT cni = d_cn_v(i);
-    const F_FLOAT cnj = d_cn_v(j);
+    const double r      = sqrt(rsq);
+    const double cni = d_cn_v(i);
+    const double cnj = d_cn_v(j);
 
     double C6=0.0, dC6_i=0.0, dC6_j=0.0;
     dC6KK(itype, jtype, cni, cnj, C6, dC6_i, dC6_j);
     if (C6 == 0.0) continue;
 
-    const F_FLOAT C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
+    const double C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
 
-    const F_FLOAT r0     = sqrt(C8/C6);
-    const F_FLOAT r4     = rsq*rsq;
-    const F_FLOAT r6     = rsq*rsq*rsq;
-    const F_FLOAT r8     = rsq*rsq*rsq*rsq;
-
+    const double r0     = sqrt(C8/C6);
+    const double r4     = rsq*rsq;
+    const double r6     = rsq*rsq*rsq;
+    const double r8     = rsq*rsq*rsq*rsq;
+    if (ii < 3 && jj < 5) {  // Remove comm->me and update->ntimestep checks
+      Kokkos::printf("  KOKKOS [BJ] i=%d j=%d r=%.6f C6=%.6e C8=%.6e r0_calc=%.6f\n", 
+                     i, j, (double)r, C6, (double)C8, (double)r0);
+      Kokkos::printf("  KOKKOS [BJ] r2r4_i=%.6f r2r4_j=%.6f autoang=%.6f\n", 
+                     (double)d_r2r4_v(itype), (double)d_r2r4_v(jtype), autoang);
+      
+      const F_FLOAT iptmp = ((a1*r0)+a2);
+      Kokkos::printf("  KOKKOS [BJ] a1=%.6f a2=%.6f iptmp=%.6f expt6=%.6e\n", 
+                     a1, a2, (double)iptmp, (double)(iptmp*iptmp*iptmp*iptmp*iptmp*iptmp));
+    }
     // ip - inner product 
-    const F_FLOAT iptmp  = (a1*r0+a2);
-    const F_FLOAT expt6  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
-    const F_FLOAT expt8  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
-    const F_FLOAT t6     = r6 + expt6 ;
-    const F_FLOAT t8     = r8 + expt8 ; 
+    const double iptmp  = (a1*r0+a2);
+    const double expt6  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
+    const double expt8  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
+    const double t6     = r6 + expt6 ;
+    const double t8     = r8 + expt8 ; 
 
-    const F_FLOAT e6     = C6/t6;
-    const F_FLOAT e8     = C8/t8;
-
-
-    const F_FLOAT tmp6   = (6.0 * s6 * C6 * r4) / (t6*t6);
-    const F_FLOAT tmp8   = (8.0 * s8 * C8 * r6) / (t8*t8);
-
-    const F_FLOAT fpairsum = -(tmp6 + tmp8);
-    const F_FLOAT fpair    = fpairsum * factor_lj;
+    const double e6     = C6/t6;
+    const double e8     = C8/t8;
 
 
-    const F_FLOAT phi = -(s6 * e6 + s8 * e8) * factor_lj;
-    const F_FLOAT rest = (s6 * e6 + s8 * e8) / C6;
+    const double tmp6   = (6.0 * s6 * C6 * r4) / (t6*t6);
+    const double tmp8   = (8.0 * s8 * C8 * r6) / (t8*t8);
+
+    const double fpairsum = -(tmp6 + tmp8);
+    const double fpair    = fpairsum * factor_lj;
+
+
+    const double phi = -(s6 * e6 + s8 * e8) * factor_lj;
+    const double rest = (s6 * e6 + s8 * e8) / C6;
     
     a_dc6_scv(i) += rest*dC6_i;
     if (NEWTON_PAIR || j < nlocal)
       a_dc6_scv(j) += rest*dC6_j;
 
-    const F_FLOAT fx = dx * fpair;
-    const F_FLOAT fy = dy * fpair;
-    const F_FLOAT fz = dz * fpair;
+    const double fx = dx * fpair;
+    const double fy = dy * fpair;
+    const double fz = dz * fpair;
     #if defined(D3K_DEBUG_BALANCE)
     sumJx += fx; sumJy += fy; sumJz += fz;
     #endif
