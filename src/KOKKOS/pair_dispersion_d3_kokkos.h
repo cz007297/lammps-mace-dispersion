@@ -152,6 +152,7 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     void unpack_reverse_comm(int, int*, double*) override;
 
   protected:
+    int need_dup;
     typedef typename Kokkos::DualView<float*****, DeviceType> tdual_float_5d;
     
     // Coordination number calculation

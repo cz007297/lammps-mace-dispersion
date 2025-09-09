@@ -180,27 +180,38 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 {
   auto debug_netF = [&](const char* tag){
   #ifdef D3K_DEBUG_NETF
-    double sx = 0.0, sy = 0.0, sz = 0.0;
     auto vf = d_f;
     const int nloc = nlocal;
+    const int nall_loc = nlocal + atom->nghost;
   
-    Kokkos::parallel_reduce(
-        Kokkos::RangePolicy<DeviceType>(0, nloc),
-        KOKKOS_LAMBDA(const int ii, double& s){ s += vf(ii,0); }, sx);
-    Kokkos::parallel_reduce(
-        Kokkos::RangePolicy<DeviceType>(0, nloc),
-        KOKKOS_LAMBDA(const int ii, double& s){ s += vf(ii,1); }, sy);
-    Kokkos::parallel_reduce(
-        Kokkos::RangePolicy<DeviceType>(0, nloc),
-        KOKKOS_LAMBDA(const int ii, double& s){ s += vf(ii,2); }, sz);
+    double sx_o=0, sy_o=0, sz_o=0;
+    Kokkos::parallel_reduce(Kokkos::RangePolicy<DeviceType>(0,nloc),
+      KOKKOS_LAMBDA(int i, double& s){ s += vf(i,0); }, sx_o);
+    Kokkos::parallel_reduce(Kokkos::RangePolicy<DeviceType>(0,nloc),
+      KOKKOS_LAMBDA(int i, double& s){ s += vf(i,1); }, sy_o);
+    Kokkos::parallel_reduce(Kokkos::RangePolicy<DeviceType>(0,nloc),
+      KOKKOS_LAMBDA(int i, double& s){ s += vf(i,2); }, sz_o);
   
-    double g[3] = {sx, sy, sz}, G[3];
-    MPI_Allreduce(g, G, 3, MPI_DOUBLE, MPI_SUM, world);
-    if (comm->me == 0)
-      fprintf(stderr, "[D3K] %s step %lld netF=(%.6e %.6e %.6e)\n",
-              tag, (long long)update->ntimestep, G[0], G[1], G[2]);
+    double sx_ag=0, sy_ag=0, sz_ag=0;
+    Kokkos::parallel_reduce(Kokkos::RangePolicy<DeviceType>(0,nall_loc),
+      KOKKOS_LAMBDA(int i, double& s){ s += vf(i,0); }, sx_ag);
+    Kokkos::parallel_reduce(Kokkos::RangePolicy<DeviceType>(0,nall_loc),
+      KOKKOS_LAMBDA(int i, double& s){ s += vf(i,1); }, sy_ag);
+    Kokkos::parallel_reduce(Kokkos::RangePolicy<DeviceType>(0,nall_loc),
+      KOKKOS_LAMBDA(int i, double& s){ s += vf(i,2); }, sz_ag);
+  
+    double GO[3], GAG[3];
+    double go[3]  = {sx_o,  sy_o,  sz_o};
+    double gag[3] = {sx_ag, sy_ag, sz_ag};
+    MPI_Allreduce(go,  GO,  3, MPI_DOUBLE, MPI_SUM, world);
+    MPI_Allreduce(gag, GAG, 3, MPI_DOUBLE, MPI_SUM, world);
+    if (comm->me == 0) {
+      fprintf(stderr, "[D3K] %s step %lld netF_owned=(%.6e %.6e %.6e) netF_all=(%.6e %.6e %.6e)\n",
+              tag, (long long)update->ntimestep, GO[0], GO[1], GO[2], GAG[0], GAG[1], GAG[2]);
+    }
   #endif
-  };
+  };  
+  
   std::unordered_map<std::string, int> dampingMap = {
       {"original", 1}, {"zerom", 2}, {"bj", 3}, {"bjm",4}};
   int dampingCode = dampingMap[damping_type];
@@ -272,11 +283,29 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   //k_cn_v.template modify<DeviceType>();
   //k_dc6_v.template modify<DeviceType>();
 
+
+  need_dup = lmp->kokkos->need_dup<DeviceType>();
+  
+  if (need_dup) {
+    dup_cn    =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterDuplicated>(d_cn_v);
+    dup_dc6   =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterDuplicated>(d_dc6_v);
+    dup_f     = Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterDuplicated>(d_f);
+    dup_eatom = Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterDuplicated>(d_eatom);
+    dup_vatom = Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterDuplicated>(d_vatom); 
+  } else {
+
   ndup_cn    =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_cn_v);
   ndup_dc6   =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_dc6_v);
   ndup_f     =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_f);
-  if (eflag_atom) ndup_eatom =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_eatom);
-  if (vflag_atom) ndup_vatom =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_vatom);
+  ndup_eatom =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_eatom);
+  ndup_vatom =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_vatom);
+  }
+
+
+
+
+
+
 
   copymode = 1; 
 
@@ -289,6 +318,8 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   // Compute CN aka Kernel 0 
 
   Kokkos::parallel_for(policyInstance<TagPairDD3KokkosCNDC6Kernel<HALF>>::get(inum), *this); 
+
+  if (need_dup) Kokkos::Experimental::contribute(d_cn_v, dup_cn);
 
   communicationStage = 1;
   // Communicated calculated kernel
@@ -378,6 +409,11 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     
   }
   debug_netF("after_dEdIJ_beforesync");
+
+  if (need_dup) {
+    Kokkos::Experimental::contribute(d_f, dup_f);
+    Kokkos::Experimental::contribute(d_dc6_v, dup_dc6);
+  }
   //atomKK->modified(execution_space, datamask_modify);
   //atomKK->sync(execution_space, datamask_modify); 
   //debug_netF("after_dEdIJ_aftersync_beforecomm");
@@ -422,23 +458,40 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   // final syncs
   //atomKK->modified(execution_space, datamask_modify);
   //debug_netF("after_dEdXYZ_beforesync_aftermod_beforesync");
+  if (need_dup) {
+    Kokkos::Experimental::contribute(d_f, dup_f);
+  }
+
   if (vflag_fdotr) pair_virial_fdotr_compute(this);
    
   if (eflag_atom) {
+    if (need_dup) Kokkos::Experimental::contribute(d_eatom, dup_eatom);
     k_eatom.template modify<DeviceType>();
     k_eatom.template sync<LMPHostType>();
   }
   if (vflag_atom) {
+    if (need_dup) Kokkos::Experimental::contribute(d_vatom, dup_vatom);
     k_vatom.template modify<DeviceType>();
     k_vatom.template sync<LMPHostType>();
   }
 
   //atomKK->sync(execution_space, F_MASK);
   copymode = 0;
-  if constexpr (!std::is_same_v<DeviceType, LMPHostType>) {
-    atomKK->sync(Host, F_MASK);
-  } 
+  //if constexpr (!std::is_same_v<DeviceType, LMPHostType>) {
+  //  atomKK->sync(Host, F_MASK);
+  //} 
   //debug_netF("after_dEdXYZ_beforesync_aftermod_beforesync_aftersync");
+  
+  // Free allocated memory
+  if (need_dup) {
+    dup_cn         = {};
+    dup_dc6        = {};
+    dup_f          = {};
+    dup_eatom      = {};
+    dup_vatom      = {};
+  }
+  
+
 }
 
 
