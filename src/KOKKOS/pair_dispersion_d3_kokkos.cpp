@@ -112,7 +112,9 @@ double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j)
     for (int t1 = 1; t1 <= ntypes; ++t1) {
       for (int t2 = 1; t2 <= ntypes; ++t2) {
         k_r0ab_v.h_view(t1,t2) = r0ab[t1][t2];
+        k_r0ab_v.h_view(t2,t1) = r0ab[t2][t1]; //symmetry
         k_cutsq_v.h_view(t1,t2) = static_cast<float>(cutsq[t1][t2]);
+        k_cutsq_v.h_view(t2,t1) = static_cast<float>(cutsq[t2][t1]);
 
 
         // Fill C6 grid blocks for all (t1,t2) from the base class c6ab array
@@ -121,6 +123,7 @@ double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j)
             for (int g1 =0; g1 < 5; ++g1){
               for (int g2 =0; g2 < 5; ++g2){
                 for (int k =0; k < 3; ++k){
+                  k_c6ab_v.h_view(b, a, g2, g1, k) = c6ab[b][a][g2][g1][k];
                   k_c6ab_v.h_view(a, b, g1, g2, k) = c6ab[a][b][g1][g2][k]; // ensure symmetry
                 }
               }
