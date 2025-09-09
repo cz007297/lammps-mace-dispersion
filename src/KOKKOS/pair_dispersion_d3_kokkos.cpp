@@ -349,8 +349,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
         Kokkos::parallel_reduce(
           Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJOriginalZeroDampKernel<HALF, 1, 1>>(0, inum),
           *this, ev);
-        if (eflag_global) eng_vdwl += ev.evdwl;
-        if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
       }
       else
       {
@@ -365,8 +363,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
         Kokkos::parallel_reduce(
           Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJModifiedZeroDampKernel<HALF, 1, 1>>(0, inum),
           *this, ev);
-        if (eflag_global) eng_vdwl += ev.evdwl;
-        if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
       }
       else
       {
@@ -381,8 +377,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
         Kokkos::parallel_reduce(
           Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJOriginalBJDampKernel<HALF, 1, 1>>(0, inum),
           *this, ev);
-        //if (eflag_global) eng_vdwl += ev.evdwl;
-        if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
       }
       else
       {
@@ -397,8 +391,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
         Kokkos::parallel_reduce(
           Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJModifiedBJDampKernel<HALF, 1, 1>>(0, inum),
           *this, ev);
-        if (eflag_global) eng_vdwl += ev.evdwl;
-        if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
       }
       else
       {
@@ -1431,9 +1423,6 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     if (NEWTON_PAIR || j < nlocal) a_dc6_scv(j) += rest*dC6_j;
 
     if (EVFLAG) {
-      if (eflag_global) { 
-        ev.evdwl += (((NEIGHFLAG==HALF || NEIGHFLAG==HALFTHREAD)&&(NEWTON_PAIR||(j<nlocal)))?1.0:0.5)*phi;
-      } 
       if (vflag_either || eflag_atom ) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
     }
 
