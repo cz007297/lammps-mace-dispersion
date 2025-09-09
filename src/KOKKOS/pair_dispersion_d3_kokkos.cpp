@@ -495,8 +495,8 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3KokkosCNDC6Kernel<
  
   // The cn array is duplicated for OpenMP, atomic for GPU, and neither for Serial
   auto v_cn_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG, DeviceType>, decltype(dup_cn), decltype(ndup_cn)>::get(dup_cn, ndup_cn);
-  auto a_cn_scv = v_cn_scv.template access<AtomicDup_v<NEIGHFLAG, DeviceType>>();
-
+  //auto a_cn_scv = v_cn_scv.template access<AtomicDup_v<NEIGHFLAG, DeviceType>>();
+  auto a_cn_scv = v_cn_scv.template access<Kokkos::Experimental::ScatterAtomic>();
   if (ii >= inum) return;    
   const int     i      = d_ilist[ii];
   const int     itype  = d_type(i);
@@ -668,8 +668,8 @@ KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZ<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int& ii, EV_FLOAT& ev) const
 {
   auto v_f_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_f),decltype(ndup_f)>::get(dup_f,ndup_f);
-  auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
-
+  //auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
+  auto a_f_scv = v_f_scv.template access<Kokkos::Experimental::ScatterAtomic>();
   
   if (ii >= inum) return;
   const int i = d_ilist[ii];
@@ -1023,10 +1023,12 @@ void PairDispersionD3Kokkos<DeviceType>::ev_tally(EV_FLOAT &ev, const int &i, co
   const int VFLAG = vflag_either;
   
   auto v_eatom_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_eatom),decltype(ndup_eatom)>::get(dup_eatom,ndup_eatom);
-  auto a_eatom_scv = v_eatom_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();
+  //auto a_eatom_scv = v_eatom_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();
+  auto a_eatom_scv = v_eatom_scv.template access<Kokkos::Experimental::ScatterAtomic>();
 
   auto v_vatom_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_vatom),decltype(ndup_vatom)>::get(dup_vatom,ndup_vatom);
-  auto a_vatom_scv = v_vatom_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();
+  //auto a_vatom_scv = v_vatom_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();
+  auto a_vatom_scv = v_vatom_scv.template access<Kokkos::Experimental::ScatterAtomic>();
 
   // Global energy (mirror PairComputeFunctor logic)
   if (EFLAG && eflag_global) {
@@ -1109,10 +1111,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   TagPairDispDD3dEdIJOriginalZeroDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
 {
   auto v_f_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_f),decltype(ndup_f)>::get(dup_f,ndup_f);
-  auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
+  //auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
+  auto a_f_scv = v_f_scv.template access<Kokkos::Experimental::ScatterAtomic>();
 
   auto v_dc6_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_dc6), decltype(ndup_dc6)>::get(dup_dc6, ndup_dc6);
-  auto a_dc6_scv = v_dc6_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();  
+  //auto a_dc6_scv = v_dc6_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
+  auto a_dc6_scv = v_dc6_scv.template access<Kokkos::Experimental::ScatterAtomic>();
 
   if (ii >= inum) return;
   const int i = d_ilist[ii];
@@ -1225,10 +1229,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   TagPairDispDD3dEdIJModifiedZeroDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
 {
   auto v_f_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_f),decltype(ndup_f)>::get(dup_f,ndup_f);
-  auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
+  //auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
+  auto a_f_scv = v_f_scv.template access<Kokkos::Experimental::ScatterAtomic>();
 
   auto v_dc6_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_dc6), decltype(ndup_dc6)>::get(dup_dc6, ndup_dc6);
-  auto a_dc6_scv = v_dc6_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();  
+  //auto a_dc6_scv = v_dc6_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();  
+  auto a_dc6_scv = v_dc6_scv.template access<Kokkos::Experimental::ScatterAtomic>();
 
   if (ii >= inum) return;
   const int i = d_ilist[ii];
@@ -1346,10 +1352,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   F_FLOAT fix = 0.0, fiy = 0.0, fiz = 0.0;
 
   auto v_f_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_f),decltype(ndup_f)>::get(dup_f,ndup_f);
-  auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
+  //auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
+  auto a_f_scv = v_f_scv.template access<Kokkos::Experimental::ScatterAtomic>();
 
   auto v_dc6_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_dc6), decltype(ndup_dc6)>::get(dup_dc6, ndup_dc6);
-  auto a_dc6_scv = v_dc6_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();  
+  //auto a_dc6_scv = v_dc6_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();  
+  auto a_dc6_scv = v_dc6_scv.template access<Kokkos::Experimental::ScatterAtomic>();
 
   if (ii >= inum) return;
   const int i = d_ilist[ii];
@@ -1459,10 +1467,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   // same logic as Original, different parameters setup in funcpar
 
   auto v_f_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_f),decltype(ndup_f)>::get(dup_f,ndup_f);
-  auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
+  //auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
+  auto a_f_scv = v_f_scv.template access<Kokkos::Experimental::ScatterAtomic>(); 
 
   auto v_dc6_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_dc6), decltype(ndup_dc6)>::get(dup_dc6, ndup_dc6);
-  auto a_dc6_scv = v_dc6_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();  
+  //auto a_dc6_scv = v_dc6_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();  
+  auto a_dc6_scv = v_dc6_scv.template access<Kokkos::Experimental::ScatterAtomic>(); 
 
   if (ii >= inum) return;
   const int i = d_ilist[ii];
