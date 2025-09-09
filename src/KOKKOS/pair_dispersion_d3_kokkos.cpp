@@ -37,7 +37,7 @@ static constexpr double autoev  = 27.21140795 ;
 #include "d3_parameters.h"
 
 template<class DeviceType>
-PairDispersionD3Kokkos<DeviceType>::PairDispersionD3Kokkos(LAMMPS *lmp) : PairDispersionD3(lmp)
+PairDispersionD3Kokkos<DeviceType>::PairDispersionD3Kokkos(LAMMPS *lmp) : PairDispersionD3(lmp), initialised(false)
 {
   kokkosable = 1;
   atomKK = (AtomKokkos *) atom;
@@ -81,7 +81,7 @@ void PairDispersionD3Kokkos<DeviceType>::init_style()
   PairDispersionD3::init_style();
 
   // new function/method
-  sync_arrays_device();
+  //sync_arrays_device();
   
   // Adjust neighbor list request for KOKKOS
   auto request = neighbor->find_request(this);
@@ -164,6 +164,15 @@ void PairDispersionD3Kokkos<DeviceType>::sync_arrays_device()
       }
     }
   }
+  if (comm->me == 0) {
+    fprintf(stderr, "KOKKOS CUTOFF DEBUG:\n");
+    for (int i = 1; i <= ntypes; i++) {
+      for (int j = 1; j <= ntypes; j++) {
+        fprintf(stderr, "  cutsq[%d][%d]=%.6f (cut=%.6f)\n", 
+                i, j, (double)k_cutsq_v.h_view(i,j), sqrt((double)k_cutsq_v.h_view(i,j)));
+      }
+    }
+  }
 
 
 }
@@ -177,6 +186,11 @@ void PairDispersionD3Kokkos<DeviceType>::coeff(int narg, char **arg)
 template<class DeviceType>
 void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 {
+  if (!initialised) {
+    sync_arrays_device();
+    initialised = true;
+  }
+
   auto debug_netF = [&](const char* tag){
   #ifdef D3K_DEBUG_NETF
     auto vf = d_f;
@@ -1365,6 +1379,9 @@ KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(
   TagPairDispDD3dEdIJOriginalBJDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
 {
+  #if defined(D3K_DEBUG_BALANCE)
+   F_FLOAT sumJx = 0, sumJy = 0, sumJz = 0;
+  #endif
 
   F_FLOAT fix = 0.0, fiy = 0.0, fiz = 0.0;
 
@@ -1378,10 +1395,14 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
 
   if (ii >= inum) return;
   const int i = d_ilist[ii];
-  if (i >= nlocal) return;
+  //if (i >= nlocal) return;
 
   const int itype = d_type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
+  if (ii < 10) {  
+    Kokkos::printf("KOKKOS BJ: Processing ii=%d i=%d itype=%d (nlocal=%d)\n", 
+                   ii, i, itype, nlocal);
+  }
 
   const double xi = d_x(i,0);
   const double yi = d_x(i,1);
@@ -1400,6 +1421,11 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double  dy  = yi - d_x(j,1);
     const double  dz  = zi - d_x(j,2);
     const double  rsq = dx*dx + dy*dy + dz*dz;
+    if (ii < 3 && jj < 10) {
+      Kokkos::printf("  KOKKOS [CUTOFF] i=%d j=%d rsq=%.6f cutsq=%.6f (pass=%s)\n", 
+                     i, j, (double)rsq, (double)d_cutsq_v(itype,jtype), 
+                     (rsq < d_cutsq_v(itype,jtype)) ? "YES" : "NO");
+    }
 
     if (rsq >= d_cutsq_v(itype,jtype)) continue;
 
@@ -1418,6 +1444,16 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double   r8     = rsq*rsq*rsq*rsq;
 
     // ip - inner product 
+    if (ii < 3 && jj < 5) {  // Remove comm->me and update->ntimestep checks
+      Kokkos::printf("  KOKKOS [BJ] i=%d j=%d r=%.6f C6=%.6e C8=%.6e r0_calc=%.6f\n", 
+                     i, j, (double)r, C6, (double)C8, (double)r0);
+      Kokkos::printf("  KOKKOS [BJ] r2r4_i=%.6f r2r4_j=%.6f autoang=%.6f\n", 
+                     (double)d_r2r4_v(itype), (double)d_r2r4_v(jtype), autoang);
+      Kokkos::printf("  KOKKOS [BJ] [dC6] C6=%.6f dC6_i=%.6f dC6_j=%.6f\n", C6, dC6_i, dC6_j); 
+      const F_FLOAT iptmp = ((a1*r0)+a2);
+      Kokkos::printf("  KOKKOS [BJ] a1=%.6f a2=%.6f iptmp=%.6f expt6=%.6e\n", 
+                     a1, a2, (double)iptmp, (double)(iptmp*iptmp*iptmp*iptmp*iptmp*iptmp));
+    }
     const double   iptmp  = ((a1*r0)+a2);
     const double   expt6  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
     const double   expt8  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
@@ -1436,6 +1472,9 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double  fx = dx * fpair;
     const double  fy = dy * fpair;
     const double  fz = dz * fpair;
+    #if defined(D3K_DEBUG_BALANCE)
+    sumJx += fx; sumJy += fy; sumJz += fz;
+    #endif
 
     fix += fx; fiy += fy; fiz += fz;
     if (NEWTON_PAIR || j < nlocal) {
@@ -1452,6 +1491,15 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     }
 
   }
+  #if defined(D3K_DEBUG_BALANCE) && !defined(KOKKOS_ENABLE_CUDA)
+  const double mx = fabs((double)fix - (double)sumJx);
+  const double my = fabs((double)fiy - (double)sumJy);
+  const double mz = fabs((double)fiz - (double)sumJz);
+  if (mx>1e-12 || my>1e-12 || mz>1e-12) {
+    printf("BJ DAMPING [BAL] step=%lld i=%d mx=%.3e my=%.3e mz=%.3e jnum=%d\n",
+           (long long)update->ntimestep, i, mx, my, mz, d_numneigh(i));
+  }
+  #endif
 
   a_f_scv(i, 0) += fix;
   a_f_scv(i, 1) += fiy;
@@ -1478,9 +1526,6 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   TagPairDispDD3dEdIJModifiedBJDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
 {
    
-  #if defined(D3K_DEBUG_BALANCE)
-   F_FLOAT sumJx = 0, sumJy = 0, sumJz = 0;
-  #endif
   // same logic as Original, different parameters setup in funcpar
 
   auto v_f_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_f),decltype(ndup_f)>::get(dup_f,ndup_f);
@@ -1532,16 +1577,6 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double r4     = rsq*rsq;
     const double r6     = rsq*rsq*rsq;
     const double r8     = rsq*rsq*rsq*rsq;
-    if (ii < 3 && jj < 5) {  // Remove comm->me and update->ntimestep checks
-      Kokkos::printf("  KOKKOS [BJ] i=%d j=%d r=%.6f C6=%.6e C8=%.6e r0_calc=%.6f\n", 
-                     i, j, (double)r, C6, (double)C8, (double)r0);
-      Kokkos::printf("  KOKKOS [BJ] r2r4_i=%.6f r2r4_j=%.6f autoang=%.6f\n", 
-                     (double)d_r2r4_v(itype), (double)d_r2r4_v(jtype), autoang);
-      
-      const F_FLOAT iptmp = ((a1*r0)+a2);
-      Kokkos::printf("  KOKKOS [BJ] a1=%.6f a2=%.6f iptmp=%.6f expt6=%.6e\n", 
-                     a1, a2, (double)iptmp, (double)(iptmp*iptmp*iptmp*iptmp*iptmp*iptmp));
-    }
     // ip - inner product 
     const double iptmp  = (a1*r0+a2);
     const double expt6  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
@@ -1570,9 +1605,6 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double fx = dx * fpair;
     const double fy = dy * fpair;
     const double fz = dz * fpair;
-    #if defined(D3K_DEBUG_BALANCE)
-    sumJx += fx; sumJy += fy; sumJz += fz;
-    #endif
     
     fix += fx; fiy += fy; fiz += fz;
     if (NEWTON_PAIR || j < nlocal) {
@@ -1583,16 +1615,6 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
 
     if (EVFLAG) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
   }
-  #if defined(D3K_DEBUG_BALANCE) && !defined(KOKKOS_ENABLE_CUDA)
-  const double mx = fabs((double)fix - (double)sumJx);
-  const double my = fabs((double)fiy - (double)sumJy);
-  const double mz = fabs((double)fiz - (double)sumJz);
-  if (mx>1e-12 || my>1e-12 || mz>1e-12) {
-    printf("BJ DAMPING [BAL] step=%lld i=%d mx=%.3e my=%.3e mz=%.3e jnum=%d\n",
-           (long long)update->ntimestep, i, mx, my, mz, d_numneigh(i));
-  }
-  #endif
-
 
   a_f_scv(i, 0) += fix;
   a_f_scv(i, 1) += fiy;
