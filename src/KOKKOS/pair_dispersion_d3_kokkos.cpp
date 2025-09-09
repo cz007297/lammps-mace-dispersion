@@ -347,7 +347,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
       {
         EV_FLOAT ev;
         Kokkos::parallel_reduce(
-          Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJOriginalZeroDamping<HALF, 1, 1>>(0, inum),
+          Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJOriginalZeroDampKernel<HALF, 1, 1>>(0, inum),
           *this, ev);
         if (eflag_global) eng_vdwl += ev.evdwl;
         if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
@@ -355,7 +355,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
       else
       {
         Kokkos::parallel_for(
-          policyInstance<TagPairDispDD3dEdIJOriginalZeroDamping<HALF, 1, 0>>::get(inum), *this);
+          policyInstance<TagPairDispDD3dEdIJOriginalZeroDampKernel<HALF, 1, 0>>::get(inum), *this);
       }
      } break;
     case 2: { 
@@ -363,7 +363,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
       {
         EV_FLOAT ev;
         Kokkos::parallel_reduce(
-          Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJModifiedZeroDamping<HALF, 1, 1>>(0, inum),
+          Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJModifiedZeroDampKernel<HALF, 1, 1>>(0, inum),
           *this, ev);
         if (eflag_global) eng_vdwl += ev.evdwl;
         if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
@@ -371,7 +371,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
       else
       {
         Kokkos::parallel_for(
-          policyInstance<TagPairDispDD3dEdIJModifiedZeroDamping<HALF, 1, 0>>::get(inum), *this);
+          policyInstance<TagPairDispDD3dEdIJModifiedZeroDampKernel<HALF, 1, 0>>::get(inum), *this);
       }
      } break;
     case 3: { 
@@ -379,15 +379,15 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
       {
         EV_FLOAT ev;
         Kokkos::parallel_reduce(
-          Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJOriginalBJDamping<HALF, 1, 1>>(0, inum),
+          Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJOriginalBJDampKernel<HALF, 1, 1>>(0, inum),
           *this, ev);
-        if (eflag_global) eng_vdwl += ev.evdwl;
+        //if (eflag_global) eng_vdwl += ev.evdwl;
         if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
       }
       else
       {
         Kokkos::parallel_for(
-          policyInstance<TagPairDispDD3dEdIJOriginalBJDamping<HALF, 1, 0>>::get(inum), *this);
+          policyInstance<TagPairDispDD3dEdIJOriginalBJDampKernel<HALF, 1, 0>>::get(inum), *this);
       }
      } break;
     case 4: { 
@@ -395,7 +395,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
       {
         EV_FLOAT ev;
         Kokkos::parallel_reduce(
-          Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJModifiedBJDamping<HALF, 1, 1>>(0, inum),
+          Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJModifiedBJDampKernel<HALF, 1, 1>>(0, inum),
           *this, ev);
         if (eflag_global) eng_vdwl += ev.evdwl;
         if (vflag_global) for (int m=0; m<6; ++m) virial[m] += ev.v[m];
@@ -403,7 +403,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
       else
       {
         Kokkos::parallel_for(
-          policyInstance<TagPairDispDD3dEdIJModifiedBJDamping<HALF, 1, 0>>::get(inum), *this);
+          policyInstance<TagPairDispDD3dEdIJModifiedBJDampKernel<HALF, 1, 0>>::get(inum), *this);
       }
      } break;
     
@@ -477,9 +477,9 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 
   //atomKK->sync(execution_space, F_MASK);
   copymode = 0;
-  //if constexpr (!std::is_same_v<DeviceType, LMPHostType>) {
-  //  atomKK->sync(Host, F_MASK);
-  //} 
+  if constexpr (!std::is_same_v<DeviceType, LMPHostType>) {
+    atomKK->sync(Host, F_MASK);
+  } 
   //debug_netF("after_dEdXYZ_beforesync_aftermod_beforesync_aftersync");
   
   // Free allocated memory
@@ -1114,7 +1114,7 @@ template<class DeviceType>
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(
-  TagPairDispDD3dEdIJOriginalZeroDamping<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
+  TagPairDispDD3dEdIJOriginalZeroDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
 {
   auto v_f_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_f),decltype(ndup_f)>::get(dup_f,ndup_f);
   auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
@@ -1219,10 +1219,10 @@ template<class DeviceType>
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(
-  TagPairDispDD3dEdIJOriginalZeroDamping<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii) const
+  TagPairDispDD3dEdIJOriginalZeroDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii) const
 {
   EV_FLOAT ev; // unused if EVFLAG==0
-  operator()(TagPairDispDD3dEdIJOriginalZeroDamping<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(), ii, ev);
+  operator()(TagPairDispDD3dEdIJOriginalZeroDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(), ii, ev);
 }
 
 
@@ -1230,7 +1230,7 @@ template<class DeviceType>
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(
-  TagPairDispDD3dEdIJModifiedZeroDamping<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
+  TagPairDispDD3dEdIJModifiedZeroDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
 {
   auto v_f_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_f),decltype(ndup_f)>::get(dup_f,ndup_f);
   auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
@@ -1335,10 +1335,10 @@ template<class DeviceType>
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(
-  TagPairDispDD3dEdIJModifiedZeroDamping<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii) const
+  TagPairDispDD3dEdIJModifiedZeroDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii) const
 {
   EV_FLOAT ev; // unused if EVFLAG==0
-  operator()(TagPairDispDD3dEdIJModifiedZeroDamping<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(), ii, ev);
+  operator()(TagPairDispDD3dEdIJModifiedZeroDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(), ii, ev);
 }
 
 
@@ -1348,7 +1348,7 @@ template<class DeviceType>
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(
-  TagPairDispDD3dEdIJOriginalBJDamping<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
+  TagPairDispDD3dEdIJOriginalBJDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
 {
 
   F_FLOAT fix = 0.0, fiy = 0.0, fiz = 0.0;
@@ -1430,7 +1430,13 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     a_dc6_scv(i) += rest*dC6_i;
     if (NEWTON_PAIR || j < nlocal) a_dc6_scv(j) += rest*dC6_j;
 
-    if (EVFLAG) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
+    if (EVFLAG) {
+      if (eflag_global) { 
+        ev.evdwl += (((NEIGHFLAG==HALF || NEIGHFLAG==HALFTHREAD)&&(NEWTON_PAIR||(j<nlocal)))?1.0:0.5)*phi;
+      } 
+      if (vflag_either || eflag_atom ) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
+    }
+
   }
 
   a_f_scv(i, 0) += fix;
@@ -1444,10 +1450,10 @@ template<class DeviceType>
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(
-  TagPairDispDD3dEdIJOriginalBJDamping<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii) const
+  TagPairDispDD3dEdIJOriginalBJDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii) const
 {
   EV_FLOAT ev; // unused if EVFLAG==0
-  operator()(TagPairDispDD3dEdIJOriginalBJDamping<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(), ii, ev);
+  operator()(TagPairDispDD3dEdIJOriginalBJDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(), ii, ev);
 }
 
 
@@ -1455,7 +1461,7 @@ template<class DeviceType>
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(
-  TagPairDispDD3dEdIJModifiedBJDamping<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
+  TagPairDispDD3dEdIJModifiedBJDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
 {
    
   #if defined(D3K_DEBUG_BALANCE)
@@ -1574,10 +1580,10 @@ template<class DeviceType>
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
 KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(
-  TagPairDispDD3dEdIJModifiedBJDamping<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii) const
+  TagPairDispDD3dEdIJModifiedBJDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii) const
 {
   EV_FLOAT ev; // unused if EVFLAG==0
-  operator()(TagPairDispDD3dEdIJModifiedBJDamping<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(), ii, ev);
+  operator()(TagPairDispDD3dEdIJModifiedBJDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(), ii, ev);
 }
 
 template<typename DeviceType>

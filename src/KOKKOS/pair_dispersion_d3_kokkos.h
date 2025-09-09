@@ -35,16 +35,16 @@ template<int NEIGHFLAG>
 struct TagPairDD3KokkosCNDC6Kernel{};
 
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
-struct TagPairDispDD3dEdIJOriginalZeroDamping{};
+struct TagPairDispDD3dEdIJOriginalZeroDampKernel{};
 
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
-struct TagPairDispDD3dEdIJModifiedZeroDamping{};
+struct TagPairDispDD3dEdIJModifiedZeroDampKernel{};
 
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
-struct TagPairDispDD3dEdIJOriginalBJDamping{};
+struct TagPairDispDD3dEdIJOriginalBJDampKernel{};
 
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
-struct TagPairDispDD3dEdIJModifiedBJDamping{};
+struct TagPairDispDD3dEdIJModifiedBJDampKernel{};
 
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
 struct TagPairDispDD3dEdXYZ{};
@@ -70,35 +70,35 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     // Main computation operators
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDispDD3dEdIJOriginalZeroDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii, EV_FLOAT& ev) const; 
+    void operator()(TagPairDispDD3dEdIJOriginalZeroDampKernel<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii, EV_FLOAT& ev) const; 
 
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDispDD3dEdIJOriginalZeroDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii) const; 
+    void operator()(TagPairDispDD3dEdIJOriginalZeroDampKernel<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii) const; 
 
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDispDD3dEdIJModifiedZeroDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii, EV_FLOAT& ev) const; 
+    void operator()(TagPairDispDD3dEdIJModifiedZeroDampKernel<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii, EV_FLOAT& ev) const; 
 
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDispDD3dEdIJModifiedZeroDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii) const; 
+    void operator()(TagPairDispDD3dEdIJModifiedZeroDampKernel<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii) const; 
     
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDispDD3dEdIJOriginalBJDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii, EV_FLOAT& ev) const; 
+    void operator()(TagPairDispDD3dEdIJOriginalBJDampKernel<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii, EV_FLOAT& ev) const; 
 
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDispDD3dEdIJOriginalBJDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii) const; 
+    void operator()(TagPairDispDD3dEdIJOriginalBJDampKernel<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii) const; 
     
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDispDD3dEdIJModifiedBJDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii, EV_FLOAT& ev) const; 
+    void operator()(TagPairDispDD3dEdIJModifiedBJDampKernel<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii, EV_FLOAT& ev) const; 
 
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDispDD3dEdIJModifiedBJDamping<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii) const; 
+    void operator()(TagPairDispDD3dEdIJModifiedBJDampKernel<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int &ii) const; 
     
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
