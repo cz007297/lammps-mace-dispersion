@@ -47,7 +47,7 @@ template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
 struct TagPairDispDD3dEdIJModifiedBJDampKernel{};
 
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
-struct TagPairDispDD3dEdXYZ{};
+struct TagPairDispDD3dEdXYZKernel{};
 
 template<class DeviceType>
 class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
@@ -102,11 +102,11 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDispDD3dEdXYZ<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int& ii, EV_FLOAT& ev) const; 
+    void operator()(TagPairDispDD3dEdXYZKernel<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int& ii, EV_FLOAT& ev) const; 
 
     template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
     KOKKOS_INLINE_FUNCTION
-    void operator()(TagPairDispDD3dEdXYZ<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int& ii) const; 
+    void operator()(TagPairDispDD3dEdXYZKernel<NEIGHFLAG, NEWTON_PAIR, EVFLAG>, const int& ii) const; 
     
     // Coordination number calculation operators
     KOKKOS_INLINE_FUNCTION

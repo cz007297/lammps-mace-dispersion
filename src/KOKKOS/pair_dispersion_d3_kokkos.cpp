@@ -112,6 +112,24 @@ double PairDispersionD3Kokkos<DeviceType>::init_one(int i, int j)
     for (int t1 = 1; t1 <= ntypes; ++t1) {
       for (int t2 = 1; t2 <= ntypes; ++t2) {
         k_r0ab_v.h_view(t1,t2) = r0ab[t1][t2];
+        k_cutsq_v.h_view(t1,t2) = static_cast<float>(cutsq[t1][t2]);
+
+
+        // Fill C6 grid blocks for all (t1,t2) from the base class c6ab array
+        for (int a = 1; a < ntypes; ++a){
+          for (int b = 1; b < ntypes; ++b){
+            for (int g1 =0; g1 < 5; ++g1){
+              for (int g2 =0; g2 < 5; ++g2){
+                for (int k =0; k < 3; ++k){
+                  k_c6ab_v.h_view(a, b, g1, g2, k) = c6ab[a][b][g1][g2][k]; // ensure symmetry
+                }
+              }
+            }
+          }
+        }
+
+
+
 
         // Use the base Pair::cutsq if available (it has been set across init_one calls)
         // Fallback to previous value if uninitialized.
@@ -437,14 +455,14 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   {
     EV_FLOAT ev;
     Kokkos::parallel_reduce(
-      Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZ<HALF, 1, 1>>(0, inum),
+      Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZKernel<HALF, 1, 1>>(0, inum),
       *this, ev);
     // no energy contributions needed in kernel 2
   }
   else
   {
     Kokkos::parallel_for(
-      policyInstance<TagPairDispDD3dEdXYZ<HALF, 1, 0>>::get(inum),*this);
+      policyInstance<TagPairDispDD3dEdXYZKernel<HALF, 1, 0>>::get(inum),*this);
   }
   debug_netF("after_dEdXYZ_beforesync");
   // final syncs
@@ -455,6 +473,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   }
 
   if (vflag_fdotr) pair_virial_fdotr_compute(this);
+  //if (vflag_fdotr) virial_fdotr_compute();
    
   if (eflag_atom) {
     if (need_dup) Kokkos::Experimental::contribute(d_eatom, dup_eatom);
@@ -665,7 +684,7 @@ void PairDispersionD3Kokkos<DeviceType>::dC6KK
 template<class DeviceType>
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
 KOKKOS_INLINE_FUNCTION
-void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZ<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int& ii, EV_FLOAT& ev) const
+void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int& ii, EV_FLOAT& ev) const
 {
   auto v_f_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_f),decltype(ndup_f)>::get(dup_f,ndup_f);
   //auto a_f_scv = v_f_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
@@ -737,10 +756,10 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZ<NEIGHFL
 template<class DeviceType>
 template<int NEIGHFLAG, int NEWTON_PAIR, int EVFLAG>
 KOKKOS_INLINE_FUNCTION
-void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZ<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int& ii) const
+void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int& ii) const
 {
   EV_FLOAT ev; // unused if EVFLAG==0
-  this->template operator()<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(TagPairDispDD3dEdXYZ<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(), ii, ev);
+  this->template operator()<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(TagPairDispDD3dEdXYZKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>(), ii, ev);
 }
 
 
@@ -1020,7 +1039,7 @@ void PairDispersionD3Kokkos<DeviceType>::ev_tally(EV_FLOAT &ev, const int &i, co
                 const F_FLOAT &dely, const F_FLOAT &delz) const
 {
   const int EFLAG = eflag_either;
-  const int VFLAG = vflag_either;
+  const int VFLAG = vflag_either && !vflag_fdotr;;
   
   auto v_eatom_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_eatom),decltype(ndup_eatom)>::get(dup_eatom,ndup_eatom);
   //auto a_eatom_scv = v_eatom_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();
