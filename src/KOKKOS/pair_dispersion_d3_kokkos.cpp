@@ -25,6 +25,7 @@ static constexpr int N_PARS_ROWS=32395; // number of rows C6 table
 static constexpr double K1 = 16.0;
 static constexpr double K3 = -4.0;
 static constexpr double autoang =  0.52917725 ;
+static constexpr double AANG6   = 0.02195871844;
 static constexpr double autoev  = 27.21140795 ;
 
 #include "d3_parameters.h"
@@ -492,12 +493,16 @@ struct DC6Derive
                        int iat, int jat, int ci, int cj,
                        double cni, double cnj, DC6Derive &acc)
   {
+    /*
     // Bounds check
     if (iat >= d_c6ab_v.extent(0) || jat >= d_c6ab_v.extent(1) ||
         ci  >= d_c6ab_v.extent(2) || cj  >= d_c6ab_v.extent(3)) return;
+    */ 
 
     double c6_ref = d_c6ab_v(iat, jat, ci, cj, 0);
-    c6_ref *= autoev * pow(autoang, 6);
+    c6_ref *= autoev * AANG6;
+    // moved check c6_ref < 0.0 check from dC6KK to here
+    if (c6_ref <= 0.0) return;
 
     const double cni_ref = d_c6ab_v(iat, jat, ci, cj, 1);
     const double cnj_ref = d_c6ab_v(iat, jat, ci, cj, 2);
@@ -550,13 +555,11 @@ void PairDispersionD3Kokkos<DeviceType>::dC6KK
   
   for (int ci = 0; ci < Ci; ++ci) {
     for (int cj = 0; cj < Cj; ++cj) {
-      double c6_ref = d_c6ab_v(iat, jat, ci, cj, 0);
-      c6_ref *= autoev * autoang * autoang * autoang * autoang * autoang * autoang; 
-      if (c6_ref > 0) {
-        DC6Derive::Operator(d_c6ab_v, iat, jat, ci, cj, cni, cnj, acc);  
-      }
+    // moved c6_ref check to operator
+      DC6Derive::Operator(d_c6ab_v, iat, jat, ci, cj, cni, cnj, acc);  
     }
   }
+  
 
   if (acc.den > 1.0e-99) {
     C6       = acc.num / acc.den;
@@ -1019,7 +1022,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
 
   const int i = d_ilist[ii];
   const int itype = type(i);
-  if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
+  //if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
   const double xi = x(i,0);
   const double yi = x(i,1);
@@ -1033,7 +1036,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double factor_lj = special_lj[sbmask_disp(j)];
         j &= NEIGHMASK; 
     const int jtype = type(j);
-    if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue; 
+    //if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue; 
 
     const double dx  = xi - x(j,0);
     const double dy  = yi - x(j,1);
@@ -1257,7 +1260,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
 
   const int i = d_ilist[ii];
   const int itype = type(i);
-  if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
+  //if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
   const double xi = x(i,0);
   const double yi = x(i,1);
@@ -1270,7 +1273,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double factor_lj = special_lj[sbmask_disp(j)];
         j &= NEIGHMASK;
     const int jtype = type(j);
-    if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue;
+    //if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue;
 
     const double  dx  = xi - x(j,0);
     const double  dy  = yi - x(j,1);
