@@ -155,8 +155,12 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
   protected:
     bool initialised;
     int need_dup, dampingCode;
-    typedef typename Kokkos::DualView<float*****, DeviceType> tdual_float_5d;
-    using t_c6_const_ra = Kokkos::View<const float*****, DeviceType, Kokkos::MemoryTraits<Kokkos::RandomAccess>>;
+    //typedef typename Kokkos::DualView<float*****, DeviceType> tdual_float_5d;
+    using tdual_float_5d = Kokkos::DualView<LMP_FLOAT*****, DeviceType>;
+    using t5_dev         = typename tdual_float_5d::t_dev;
+    using t1_const_ra = Kokkos::View<const LMP_FLOAT*, typename DAT::t_float_1d::array_layout, DeviceType, Kokkos::MemoryTraits<Kokkos::RandomAccess>>;
+    using t2_const_ra = Kokkos::View<const LMP_FLOAT**, typename DAT::t_float_2d::array_layout, DeviceType, Kokkos::MemoryTraits<Kokkos::RandomAccess>>;   
+    using t5_const_ra    = Kokkos::View<const LMP_FLOAT*****, typename t5_dev::array_layout, DeviceType, Kokkos::MemoryTraits<Kokkos::RandomAccess>>; 
     // Coordination number calculation
     void calc_coordination_numbersKK();
     
@@ -200,8 +204,10 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     
     tdual_float_5d k_c6ab_v;
     typename tdual_float_5d::t_dev d_c6ab_v;
-    t_c6_const_ra d_c6ab_ra;  
-  
+    t1_const_ra d_rcov_ra, d_r2r4_ra, d_mxci_ra;
+    t2_const_ra d_r0ab_ra, d_cutsq_ra;
+    t5_const_ra d_c6ab_ra;  
+ 
     // Communication variables
     typename AT::t_int_1d d_sendlistV;
     typename AT::t_xfloat_1d bufV;
