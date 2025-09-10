@@ -72,6 +72,11 @@ void PairDispersionD3Kokkos<DeviceType>::init_style()
   auto request = neighbor->find_request(this);
   request->set_kokkos_host(std::is_same_v<DeviceType,LMPHostType> && !std::is_same_v<DeviceType,LMPDeviceType>);
   request->set_kokkos_device(std::is_same_v<DeviceType,LMPDeviceType>);
+  if (damping_type == "original")        dampingCode = 1;
+    else if (damping_type == "zerom")    dampingCode = 2;
+    else if (damping_type == "bj")       dampingCode = 3;
+    else if (damping_type == "bjm")      dampingCode = 4;
+    else                                 dampingCode = 1; //default to original  
 
 }
 
@@ -132,6 +137,7 @@ void PairDispersionD3Kokkos<DeviceType>::sync_arrays_device()
   d_r0ab_v  = k_r0ab_v.template view<DeviceType>();
   d_cutsq_v = k_cutsq_v.template view<DeviceType>();
   d_c6ab_v  = k_c6ab_v.template view<DeviceType>();
+  d_c6ab_ra = t_c6_const_ra(d_c6ab_v);
 }
 
 template<class DeviceType>
@@ -147,11 +153,11 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     sync_arrays_device();
     initialised = true;
   }
- 
+  /* 
   std::unordered_map<std::string, int> dampingMap = {
       {"original", 1}, {"zerom", 2}, {"bj", 3}, {"bjm",4}};
   int dampingCode = dampingMap[damping_type];
- 
+  */ 
   eflag = eflag_in;
   vflag = vflag_in;
   
@@ -262,9 +268,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   // TODO - implement logic for other lists
   switch (dampingCode) {
     case 1: {
-      if (comm->me == 0 && update->ntimestep <= 1) {
-        fprintf(stderr, "  EXECUTING: Original Zero Damping Kernel\n");
-      } 
       if (evflag)
       {
         Kokkos::parallel_reduce(
@@ -291,9 +294,6 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
       }
      } break;
     case 3: {
-      if (comm->me == 0 && update->ntimestep <= 1) {
-        fprintf(stderr, "  EXECUTING: Original BJ Damping Kernel\n");
-      } 
       if (evflag)
       {
         Kokkos::parallel_reduce(
@@ -556,7 +556,8 @@ void PairDispersionD3Kokkos<DeviceType>::dC6KK
   for (int ci = 0; ci < Ci; ++ci) {
     for (int cj = 0; cj < Cj; ++cj) {
     // moved c6_ref check to operator
-      DC6Derive::Operator(d_c6ab_v, iat, jat, ci, cj, cni, cnj, acc);  
+      //DC6Derive::Operator(d_c6ab_v, iat, jat, ci, cj, cni, cnj, acc);  
+      DC6Derive::Operator(d_c6ab_ra, iat, jat, ci, cj, cni, cnj, acc);  
     }
   }
   
