@@ -200,9 +200,9 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   d_dc6_v = k_dc6_v.view<DeviceType>();
   d_cutsq_v = k_cutsq_v.view<DeviceType>();
 
-  d_x    = atomKK->k_x.view<DeviceType>();
-  d_f    = atomKK->k_f.view<DeviceType>();
-  d_type = atomKK->k_type.view<DeviceType>();
+  x    = atomKK->k_x.view<DeviceType>();
+  f    = atomKK->k_f.view<DeviceType>();
+  type = atomKK->k_type.view<DeviceType>();
   nlocal = atom->nlocal;
   nall   = nlocal + atom->nghost;
   newton_pair = force->newton_pair; 
@@ -219,14 +219,14 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   if (need_dup) {
     dup_cn    =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterDuplicated>(d_cn_v);
     dup_dc6   =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterDuplicated>(d_dc6_v);
-    dup_f     = Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterDuplicated>(d_f);
+    dup_f     = Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterDuplicated>(f);
     dup_eatom = Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterDuplicated>(d_eatom);
     dup_vatom = Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterDuplicated>(d_vatom); 
   } else {
 
   ndup_cn    =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_cn_v);
   ndup_dc6   =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_dc6_v);
-  ndup_f     =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_f);
+  ndup_f     =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(f);
   ndup_eatom =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_eatom);
   ndup_vatom =  Kokkos::Experimental::create_scatter_view<Kokkos::Experimental::ScatterSum, Kokkos::Experimental::ScatterNonDuplicated>(d_vatom);
   }
@@ -326,7 +326,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   }
 
   if (need_dup) {
-    Kokkos::Experimental::contribute(d_f, dup_f);
+    Kokkos::Experimental::contribute(f, dup_f);
     Kokkos::Experimental::contribute(d_dc6_v, dup_dc6);
   }
   communicationStage = 2;
@@ -356,7 +356,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   }
 
   if (need_dup) {
-    Kokkos::Experimental::contribute(d_f, dup_f);
+    Kokkos::Experimental::contribute(f, dup_f);
   }
 
   if (eflag_global) {
@@ -367,7 +367,9 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   }
 
 
-  if (vflag_fdotr) pair_virial_fdotr_compute(this);
+  if (vflag_fdotr) {
+    pair_virial_fdotr_compute(this);
+  }
    
   if (eflag_atom) {
     if (need_dup) Kokkos::Experimental::contribute(d_eatom, dup_eatom);
@@ -409,21 +411,21 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDD3KokkosCNDC6Kernel<
   auto a_cn_scv = v_cn_scv.template access<Kokkos::Experimental::ScatterAtomic>();
   if (ii >= inum) return;    
   const int     i      = d_ilist[ii];
-  const int     itype  = d_type(i);
+  const int     itype  = type(i);
   if (itype <= 0 || itype >= d_rcov_v.extent(0)) return; 
   const int     jnum   = d_numneigh[i];
-  const double xi     = d_x(i,0);
-  const double yi     = d_x(i,1);
-  const double zi     = d_x(i,2);
+  const double xi     = x(i,0);
+  const double yi     = x(i,1);
+  const double zi     = x(i,2);
 
   for (int jj = 0; jj < jnum; jj++)
   {
     int j                = d_neighbors(i, jj) & NEIGHMASK; 
-    const int     jtype  = d_type(j); 
+    const int     jtype  = type(j); 
     if (jtype <= 0 || jtype >= d_rcov_v.extent(0)) continue;
-    const double xj     = d_x(j,0);
-    const double yj     = d_x(j,1);
-    const double zj     = d_x(j,2);
+    const double xj     = x(j,0);
+    const double yj     = x(j,1);
+    const double zj     = x(j,2);
     
     const double xij    = xi - xj;
     const double yij    = yi - yj;
@@ -570,10 +572,10 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZKernel<N
   auto a_f_scv = v_f_scv.template access<Kokkos::Experimental::ScatterAtomic>();
   
   const int i = d_ilist[ii];
-  const double  xi = d_x(i,0);
-  const double  yi = d_x(i,1);
-  const double  zi = d_x(i,2);
-  const int itype = d_type(i);
+  const double  xi = x(i,0);
+  const double  yi = x(i,1);
+  const double  zi = x(i,2);
+  const int itype = type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
   
   double fix = 0.0, fiy = 0.0, fiz = 0.0;
@@ -583,11 +585,11 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZKernel<N
     const int jfull = d_neighbors(i,jj);
     const double factor_lj = special_lj[sbmask_disp(jfull)]; 
     const int j = jfull & NEIGHMASK;
-    const int jtype = d_type(j);
+    const int jtype = type(j);
 
-    const double  dx = xi - d_x(j,0);
-    const double  dy = yi - d_x(j,1);
-    const double  dz = zi - d_x(j,2);
+    const double  dx = xi - x(j,0);
+    const double  dy = yi - x(j,1);
+    const double  dz = zi - x(j,2);
     const double  rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq < d_cutsq_v(itype, jtype))  {
@@ -913,7 +915,7 @@ void PairDispersionD3Kokkos<DeviceType>::ev_tally(EV_FLOAT &ev, const int &i, co
                 const double &dely, const double &delz) const
 {
   const int EFLAG = eflag_either;
-  const int VFLAG = vflag_either && !vflag_fdotr;;
+  const int VFLAG = vflag_either;
   
   auto v_eatom_scv = ScatterViewHelper<NeedDup_v<NEIGHFLAG,DeviceType>,decltype(dup_eatom),decltype(ndup_eatom)>::get(dup_eatom,ndup_eatom);
   //auto a_eatom_scv = v_eatom_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();
@@ -1010,12 +1012,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   auto a_dc6_scv = v_dc6_scv.template access<Kokkos::Experimental::ScatterAtomic>();
 
   const int i = d_ilist[ii];
-  const int itype = d_type(i);
+  const int itype = type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
-  const double xi = d_x(i,0);
-  const double yi = d_x(i,1);
-  const double zi = d_x(i,2);
+  const double xi = x(i,0);
+  const double yi = x(i,1);
+  const double zi = x(i,2);
 
   double fix = 0.0, fiy = 0.0, fiz = 0.0;
 
@@ -1024,12 +1026,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     int j = d_neighbors(i,jj);
     const double factor_lj = special_lj[sbmask_disp(j)];
         j &= NEIGHMASK; 
-    const int jtype = d_type(j);
+    const int jtype = type(j);
     if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue; 
 
-    const double dx  = xi - d_x(j,0);
-    const double dy  = yi - d_x(j,1);
-    const double dz  = zi - d_x(j,2);
+    const double dx  = xi - x(j,0);
+    const double dy  = yi - x(j,1);
+    const double dz  = zi - x(j,2);
     const double rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq < d_cutsq_v(itype, jtype)) {
@@ -1126,12 +1128,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   auto a_dc6_scv = v_dc6_scv.template access<Kokkos::Experimental::ScatterAtomic>();
 
   const int i = d_ilist[ii];
-  const int itype = d_type(i);
+  const int itype = type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
-  const double xi = d_x(i,0);
-  const double yi = d_x(i,1);
-  const double zi = d_x(i,2);
+  const double xi = x(i,0);
+  const double yi = x(i,1);
+  const double zi = x(i,2);
 
   double fix = 0.0, fiy = 0.0, fiz = 0.0;
 
@@ -1140,12 +1142,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     int                  j  = d_neighbors(i,jj);
     const double factor_lj  = special_lj[sbmask_disp(j)];
                          j &= NEIGHMASK;
-    const int         jtype = d_type(j);
+    const int         jtype = type(j);
     if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue;
 
-    const double dx  = xi - d_x(j,0);
-    const double dy  = yi - d_x(j,1);
-    const double dz  = zi - d_x(j,2);
+    const double dx  = xi - x(j,0);
+    const double dy  = yi - x(j,1);
+    const double dz  = zi - x(j,2);
     const double rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq < d_cutsq_v(itype, jtype)) {
@@ -1248,12 +1250,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   auto a_dc6_scv = v_dc6_scv.template access<Kokkos::Experimental::ScatterAtomic>();
 
   const int i = d_ilist[ii];
-  const int itype = d_type(i);
+  const int itype = type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
-  const double xi = d_x(i,0);
-  const double yi = d_x(i,1);
-  const double zi = d_x(i,2);
+  const double xi = x(i,0);
+  const double yi = x(i,1);
+  const double zi = x(i,2);
 
 
   const int jnum = d_numneigh[i];
@@ -1261,12 +1263,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     int j = d_neighbors(i,jj);
     const double factor_lj = special_lj[sbmask_disp(j)];
         j &= NEIGHMASK;
-    const int jtype = d_type(j);
+    const int jtype = type(j);
     if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue;
 
-    const double  dx  = xi - d_x(j,0);
-    const double  dy  = yi - d_x(j,1);
-    const double  dz  = zi - d_x(j,2);
+    const double  dx  = xi - x(j,0);
+    const double  dy  = yi - x(j,1);
+    const double  dz  = zi - x(j,2);
     const double  rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq < d_cutsq_v(itype, jtype)) {
@@ -1358,12 +1360,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   if (ii >= inum) return;
   const int i = d_ilist[ii];
   if (i >= nlocal) return;
-  const int itype = d_type(i);
+  const int itype = type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
-  const double xi = d_x(i,0);
-  const double yi = d_x(i,1);
-  const double zi = d_x(i,2);
+  const double xi = x(i,0);
+  const double yi = x(i,1);
+  const double zi = x(i,2);
 
   double fix = 0.0, fiy = 0.0, fiz = 0.0;
 
@@ -1372,12 +1374,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const int jfull = d_neighbors(i,jj);
     const double factor_lj = special_lj[sbmask_disp(jfull)];
     const int j = jfull & NEIGHMASK;
-    const int jtype = d_type(j);
+    const int jtype = type(j);
     if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue;
 
-    const double dx  = xi - d_x(j,0);
-    const double dy  = yi - d_x(j,1);
-    const double dz  = zi - d_x(j,2);
+    const double dx  = xi - x(j,0);
+    const double dy  = yi - x(j,1);
+    const double dz  = zi - x(j,2);
     const double rsq = dx*dx + dy*dy + dz*dz;
 
     if (rsq < d_cutsq_v(itype, jtype)) {

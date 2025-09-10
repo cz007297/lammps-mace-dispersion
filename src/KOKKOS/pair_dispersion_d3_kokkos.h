@@ -56,8 +56,8 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     enum {EnabledNeighFlags=HALF};
     typedef ArrayTypes<DeviceType> AT;
     typedef DeviceType device_type;
-    typename AT::t_x_array_const_um x;
-    typename AT::t_f_array_const_um f;
+    //typename AT::t_x_array_const_um x;
+    //typename AT::t_f_array_const_um f;
     typedef EV_FLOAT value_type;
    
     PairDispersionD3Kokkos(class LAMMPS *);
@@ -161,9 +161,12 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     void calc_coordination_numbersKK();
     
     // Device views
-    typename AT::t_x_array d_x;
-    typename AT::t_f_array d_f;
-    typename AT::t_int_1d d_type;
+    typename AT::t_x_array x;
+    typename AT::t_f_array f;
+    //typename AT::t_x_array x;
+    //typename AT::t_f_array f;
+    //typename AT::t_int_1d d_type;
+    typename AT::t_int_1d type;
     typename AT::t_neighbors_2d d_neighbors;
     typename AT::t_int_1d d_ilist, d_numneigh;
    
