@@ -205,7 +205,7 @@ class PairDispersionD3Kokkos : public PairDispersionD3, public KokkosBase
     int first;
     
     // Local variables
-    int nlocal, nall, inum, nmax;
+    int nlocal, nall, inum, nmax, eflag, vflag;
     int newton_pair;
     ExecutionSpace execution_space;
 
