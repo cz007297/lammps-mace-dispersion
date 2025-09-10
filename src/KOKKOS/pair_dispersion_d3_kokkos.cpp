@@ -1186,9 +1186,9 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   //auto a_dc6_scv = v_dc6_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>(); 
   auto a_dc6_scv = v_dc6_scv.template access<Kokkos::Experimental::ScatterAtomic>();
 
-  if (ii >= inum) return;
+  //if (ii >= inum) return;
   const int i = d_ilist[ii];
-  if (i >= nlocal) return;
+  //if (i >= nlocal) return;
   const int itype = d_type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
@@ -1200,9 +1200,10 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
 
   const int jnum = d_numneigh[i];
   for (int jj = 0; jj < jnum; ++jj) {
-    const int jfull = d_neighbors(i,jj);
-    const double factor_lj = special_lj[sbmask_disp(jfull)];
-    const int j = jfull & NEIGHMASK;
+    const int j = d_neighbors(i,jj);
+              j &= NEIGHMASK; 
+
+    const double factor_lj = special_lj[sbmask_disp(j)];
     const int jtype = d_type(j);
     if (jtype <= 0 || jtype >= d_mxci_v.extent(0)) continue; 
 
@@ -1227,16 +1228,16 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     dC6KK(itype, jtype, cni, cnj, C6, dC6_i, dC6_j);
     if (C6 == 0.0) continue;
 
-    const double C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * (autoang * autoang);
+    const double C8 = 3.0 * C6 * d_r2r4_v(itype) * d_r2r4_v(jtype) * autoang * autoang;
 
     const double r0     = r / d_r0ab_v(itype, jtype);
     const double alpha6 = alpha;
-    const double alpha8 = alpha + 2.0;
+    const double alpha8 = alpha + 2.0f;
 
     const double t6    = pow(rs6 / r0, alpha6);
-    const double damp6 = 1.0 / (1.0 + 6.0 * t6);
+    const double damp6 = 1.0f / (1.0f + 6.0f * t6);
     const double t8    = pow(rs8 / r0, alpha8);
-    const double damp8 = 1.0 / (1.0 + 6.0 * t8);
+    const double damp8 = 1.0f / (1.0f + 6.0f * t8);
 
     const double e6 = C6 * damp6 * r6inv;
     const double e8 = C8 * damp8 * r8inv;
@@ -1244,10 +1245,9 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double tmp6 = 6.0 * s6 * C6 * r8inv  * damp6;
     const double tmp8 = 8.0 * s8 * C8 * r10inv * damp8;
 
-    const double fpair_no_damp = -(tmp6 + tmp8);
-    const double fpair_damp    =  (tmp6 * alpha6 * t6 * damp6)
-                                + (tmp8 * alpha8 * t8 * damp8 * 0.75);
-    const double fpair = (fpair_no_damp + fpair_damp) * factor_lj;
+    const double fpair1 = -(tmp6 + tmp8);
+    const double fpair2 =  tmp6 * alpha6 * t6 * damp6 + (3.0f / 4) * tmp8 * alpha8 * t8 * damp8;
+    const double fpair = (fpair1 + fpair2) * factor_lj;
 
     const double phi = -(s6 * e6 + s8 * e8) * factor_lj;
 
@@ -1271,7 +1271,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
       a_f_scv(j,2) -= fz;
     }
 
-    if (EVFLAG) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
+    if (EVFLAG) {
+      if (eflag) {
+        ev.evdwl += (((NEIGHFLAG==HALF || NEIGHFLAG==HALFTHREAD)&&(NEWTON_PAIR||(j<nlocal)))?1.0:0.5)*phi;
+      }
+      if (eflag_atom || vflag_either ) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
+    }
   }
 
   a_f_scv(i, 0) += fix;
@@ -1304,9 +1309,9 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
   //auto a_dc6_scv = v_dc6_scv.template access<AtomicDup_v<NEIGHFLAG,DeviceType>>();  
   auto a_dc6_scv = v_dc6_scv.template access<Kokkos::Experimental::ScatterAtomic>();
 
-  if (ii >= inum) return;
+  //if (ii >= inum) return;
   const int i = d_ilist[ii];
-  if (i >= nlocal) return;
+  //if (i >= nlocal) return;
   const int itype = d_type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
 
@@ -1389,7 +1394,12 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
       a_f_scv(j,2) -= fz;
     }
 
-    if (EVFLAG) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
+    if (EVFLAG) {
+      if (eflag) {
+        ev.evdwl += (((NEIGHFLAG==HALF || NEIGHFLAG==HALFTHREAD)&&(NEWTON_PAIR||(j<nlocal)))?1.0:0.5)*phi;
+      }
+      if (eflag_atom || vflag_either ) this->template ev_tally<NEIGHFLAG,NEWTON_PAIR>(ev, i, j, phi, fpair, dx, dy, dz);
+    }
   }
 
   a_f_scv(i, 0) += fix;
