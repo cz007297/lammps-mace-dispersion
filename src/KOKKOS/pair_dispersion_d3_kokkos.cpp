@@ -324,7 +324,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     eng_vdwl += ev.evdwl;
     ev.evdwl = 0.0;
   }
-  if (vflag_global && !vflag_fdotr) {
+  if (vflag_global) {
     for (int m = 0; m < 6; ++m) {
       virial[m] += ev.v[m];
       ev.v[m] = 0.0;
@@ -373,7 +373,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   }
 
 
-  if (vflag_global && !vflag_fdotr) {
+  if (vflag_fdotr) {
     pair_virial_fdotr_compute(this);
   }
    
