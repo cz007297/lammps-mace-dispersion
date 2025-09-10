@@ -132,7 +132,6 @@ void PairDispersionD3Kokkos<DeviceType>::sync_arrays_device()
       }
     }
   }
-
   // Sync all to device
   k_mxci_v.modify_host();   k_mxci_v.template sync<DeviceType>();
   k_r2r4_v.modify_host();   k_r2r4_v.template sync<DeviceType>();
@@ -148,33 +147,6 @@ void PairDispersionD3Kokkos<DeviceType>::sync_arrays_device()
   d_r0ab_v  = k_r0ab_v.template view<DeviceType>();
   d_cutsq_v = k_cutsq_v.template view<DeviceType>();
   d_c6ab_v  = k_c6ab_v.template view<DeviceType>();
-  if (comm->me == 0) {
-    int ntypes = atom->ntypes;
-    fprintf(stderr, "KOKKOS SYNC DEBUG: ntypes=%d\n", ntypes);
-    for (int t = 1; t <= ntypes; t++) {
-      fprintf(stderr, "  KOKKOS r2r4[%d]=%.6f rcov[%d]=%.6f mxci[%d]=%d\n", 
-              t, (double)k_r2r4_v.h_view(t), t, (double)k_rcov_v.h_view(t), t, (int)k_mxci_v.h_view(t));
-    }
-    
-    // Sample values
-    for (int i = 1; i <= ntypes && i <= 2; i++) {
-      for (int j = 1; j <= ntypes && j <= 2; j++) {
-        fprintf(stderr, "  KOKKOS r0ab[%d][%d]=%.6f\n", i, j, (double)k_r0ab_v.h_view(i,j));
-        fprintf(stderr, "  KOKKOS c6ab[%d][%d][0][0][0]=%.6e\n", i, j, (double)k_c6ab_v.h_view(i,j,0,0,0));
-      }
-    }
-  }
-  if (comm->me == 0) {
-    fprintf(stderr, "KOKKOS CUTOFF DEBUG:\n");
-    for (int i = 1; i <= ntypes; i++) {
-      for (int j = 1; j <= ntypes; j++) {
-        fprintf(stderr, "  cutsq[%d][%d]=%.6f (cut=%.6f)\n", 
-                i, j, (double)k_cutsq_v.h_view(i,j), sqrt((double)k_cutsq_v.h_view(i,j)));
-      }
-    }
-  }
-
-
 }
 
 template<class DeviceType>
@@ -191,8 +163,8 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     initialised = true;
   }
 
-  auto debug_netF = [&](const char* tag){
-  #ifdef D3K_DEBUG_NETF
+  //auto debug_netF = [&](const char* tag){
+  /*#ifdef D3K_DEBUG_NETF
     auto vf = d_f;
     const int nloc = nlocal;
     const int nall_loc = nlocal + atom->nghost;
@@ -223,11 +195,12 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
               tag, (long long)update->ntimestep, GO[0], GO[1], GO[2], GAG[0], GAG[1], GAG[2]);
     }
   #endif
-  };  
+  };  */
   
   std::unordered_map<std::string, int> dampingMap = {
       {"original", 1}, {"zerom", 2}, {"bj", 3}, {"bjm",4}};
   int dampingCode = dampingMap[damping_type];
+  /*
   if (comm->me == 0 && update->ntimestep <= 3) {
     fprintf(stderr, "STEP %lld: damping_type='%s' -> dampingCode=%d\n", 
           (long long)update->ntimestep, damping_type.c_str(), dampingCode);
@@ -237,13 +210,16 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   } else {
     fprintf(stderr, "  Zero params: rs6=%.6f rs8=%.6f alpha=%.6f\n", rs6, rs8, alpha);
     }
-  }  
+  } */ 
 
   
   int eflag = eflag_in;
   int vflag = vflag_in;
   
-  ev_init(eflag, vflag);
+  ev_init(eflag, vflag, 0);
+   
+  // DECLARE SINGLE EV
+  EV_FLOAT ev;
   
   if (eflag_atom)
   {
@@ -372,7 +348,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
       } 
       if (evflag)
       {
-        EV_FLOAT ev;
+        //EV_FLOAT ev;
         Kokkos::parallel_reduce(
           Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJOriginalZeroDampKernel<HALF, 1, 1>>(0, inum),
           *this, ev);
@@ -386,7 +362,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     case 2: { 
       if (evflag)
       {
-        EV_FLOAT ev;
+        //EV_FLOAT ev;
         Kokkos::parallel_reduce(
           Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJModifiedZeroDampKernel<HALF, 1, 1>>(0, inum),
           *this, ev);
@@ -403,7 +379,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
       } 
       if (evflag)
       {
-        EV_FLOAT ev;
+        //EV_FLOAT ev;
         Kokkos::parallel_reduce(
           Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJOriginalBJDampKernel<HALF, 1, 1>>(0, inum),
           *this, ev);
@@ -417,7 +393,7 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     case 4: { 
       if (evflag)
       {
-        EV_FLOAT ev;
+        //EV_FLOAT ev;
         Kokkos::parallel_reduce(
           Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdIJModifiedBJDampKernel<HALF, 1, 1>>(0, inum),
           *this, ev);
@@ -430,7 +406,11 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
      } break;
     
   }
-  debug_netF("after_dEdIJ_beforesync");
+  if (eflag) {
+    eng_vdwl += ev.evdwl;
+    ev.evdwl = 0.0;
+  }
+  //debug_netF("after_dEdIJ_beforesync");
 
   if (need_dup) {
     Kokkos::Experimental::contribute(d_f, dup_f);
@@ -453,19 +433,18 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   //debug_netF("after_dEdIJ_aftersync_aftercomm");
   //atomKK->sync(execution_space, F_MASK);
   //debug_netF("after_dEdIJ_aftersync_aftercomm_aftersecondcomm");
-  #if defined(D3K_DEBUG_DC6) && !defined(KOKKOS_ENABLE_CUDA)
+  /*#if defined(D3K_DEBUG_DC6) && !defined(KOKKOS_ENABLE_CUDA)
   atomKK->sync(Host, 0); // ensure host mirrors fresh
   if (comm->me==0) {
     int imax = std::min(5, nlocal);
     for (int i=0;i<imax;i++) printf("[DC6] i=%d dc6=%.6e\n", i, (double)k_dc6_v.h_view(i));
   }
-  #endif  
-
+  #endif  */
 
   // compute kernel 2
   if (evflag)
   {
-    EV_FLOAT ev;
+    //EV_FLOAT ev;
     Kokkos::parallel_reduce(
       Kokkos::RangePolicy<DeviceType, TagPairDispDD3dEdXYZKernel<HALF, 1, 1>>(0, inum),
       *this, ev);
@@ -476,16 +455,30 @@ void PairDispersionD3Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
     Kokkos::parallel_for(
       policyInstance<TagPairDispDD3dEdXYZKernel<HALF, 1, 0>>::get(inum),*this);
   }
-  debug_netF("after_dEdXYZ_beforesync");
+  if (eflag) {
+    eng_vdwl += ev.evdwl;
+    ev.evdwl = 0.0;
+  }
+  //debug_netF("after_dEdXYZ_beforesync");
   // final syncs
   //atomKK->modified(execution_space, datamask_modify);
   //debug_netF("after_dEdXYZ_beforesync_aftermod_beforesync");
+
   if (need_dup) {
     Kokkos::Experimental::contribute(d_f, dup_f);
   }
 
+  if (eflag_global) {
+    //EV_FLOAT ev;
+    eng_vdwl += ev.evdwl;
+  }
+  if (vflag_global) {
+    //EV_FLOAT ev; 
+    for (int m=0; m<6; ++m) virial[m] += ev.v[m];
+  }
+
+
   if (vflag_fdotr) pair_virial_fdotr_compute(this);
-  //if (vflag_fdotr) virial_fdotr_compute();
    
   if (eflag_atom) {
     if (need_dup) Kokkos::Experimental::contribute(d_eatom, dup_eatom);
@@ -607,9 +600,11 @@ struct DC6Derive
                                int iat, int jat, int ci, int cj, 
                                double cni, double cnj, DC6Derive &acc)
   {
-    // Add bounds checking
-    if (iat >= d_c6ab_v.extent(0) || jat >= d_c6ab_v.extent(1) ||
-        ci >= d_c6ab_v.extent(2) || cj >= d_c6ab_v.extent(3)) {
+    // Add bounds checking with debug
+    if (iat >= d_c6ab_v.extent(0) || jat >= d_c6ab_v.extent(1) || ci >= d_c6ab_v.extent(2) || cj >= d_c6ab_v.extent(3)) {
+      if (iat == 2 && jat == 2) {
+        Kokkos::printf("    Operator bounds check failed: iat=%d jat=%d ci=%d cj=%d\n", iat, jat, ci, cj);
+      }
       return;
     }
     
@@ -638,6 +633,7 @@ struct DC6Derive
     acc.dden_i           += term_i;
     acc.dnum_j           += c6_ref * term_j;
     acc.dden_j           += term_j;
+   
   }
 };
 
@@ -669,16 +665,51 @@ void PairDispersionD3Kokkos<DeviceType>::dC6KK
   DC6Derive acc;
   DC6Derive::init(acc);
 
+  if (iat >= d_c6ab_v.extent(0) || jat >= d_c6ab_v.extent(1) || cni >= d_c6ab_v.extent(2) || cnj >= d_c6ab_v.extent(3)) {
+    return;  // ← Early return without accumulating derivatives!
+  }
+  /*
   if (iat >= d_c6ab_v.extent(0) || jat >= d_c6ab_v.extent(1)) {
     C6 = 0.0; dC6_dCNi = 0.0; dC6_dCNj = 0.0;
     return;
+  }*/
+
+  // ADD DEBUG HERE
+  /*
+  if (iat == 2 && jat == 2) {
+    Kokkos::printf("KOKKOS dC6KK: iat=%d jat=%d cni=%.6f cnj=%.6f\n", iat, jat, cni, cnj);
+    Kokkos::printf("  extents: %d %d %d %d\n", (int)d_c6ab_v.extent(0), (int)d_c6ab_v.extent(1), (int)d_c6ab_v.extent(2), (int)d_c6ab_v.extent(3));
+    Kokkos::printf("  Ci=%d Cj=%d\n", Ci, Cj);
+  }*/
+
+  if (iat >= d_c6ab_v.extent(0) || jat >= d_c6ab_v.extent(1)) {
+    if (iat == 2 && jat == 2) {
+      Kokkos::printf("  EARLY RETURN: bounds check failed!\n");
+    }
+    C6 = 0.0; dC6_dCNi = 0.0; dC6_dCNj = 0.0;
+    return;
   }
+
 
   for (int ci = 0; ci < Ci; ++ci) {
     if (ci >= d_c6ab_v.extent(2)) break;
     for (int cj = 0; cj < Cj; ++cj) {
       if (cj >= d_c6ab_v.extent(3)) break;
+      const double c6_ref = d_c6ab_v(iat, jat, ci, cj, 0);
+      if (c6_ref <= 0.0) continue; 
+      // ADD DEBUG BEFORE CALLING Operator
+      /*if (iat == 2 && jat == 2 && ci == 0 && cj == 0) {
+        Kokkos::printf("  Before Operator: acc.num=%.6e acc.den=%.6e\n", acc.num, acc.den);
+        Kokkos::printf("  Before Operator: acc.dnum_i=%.6e acc.dden_i=%.6e\n", acc.dnum_i, acc.dden_i);
+      }*/
+      
       DC6Derive::Operator(d_c6ab_v, iat, jat, ci, cj, cni, cnj, acc);
+   
+      /*if (iat == 2 && jat == 2 && ci == 0 && cj == 0) {
+        Kokkos::printf("  After Operator: acc.num=%.6e acc.den=%.6e\n", acc.num, acc.den);
+        Kokkos::printf("  After Operator: acc.dnum_i=%.6e acc.dden_i=%.6e\n", acc.dnum_i, acc.dden_i);
+      }*/ 
+   
     }
   }
 
@@ -691,6 +722,7 @@ void PairDispersionD3Kokkos<DeviceType>::dC6KK
     dC6_dCNi = 0.0;
     dC6_dCNj = 0.0;
   }
+  
 }
 
 template<class DeviceType>
@@ -740,6 +772,11 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(TagPairDispDD3dEdXYZKernel<N
 
       const double  fpair1 = dcn * (d_dc6_v(i) + d_dc6_v(j)) / r ; 
       const double  fpair  = fpair1*factor_lj;
+      /*
+      if (ii < 3 && jj < 5) {
+        Kokkos::printf("KOKKOS: KERNEL 2i=%d j=%d jfull=%d factor=%.6f rsq=%.6f cutsq=%.6f\n", 
+                       i, j, jfull, factor_lj, rsq, (double)d_cutsq_v(itype,jtype));
+      }*/
      
       const double  fx = dx * fpair;
       const double  fy = dy * fpair; 
@@ -1379,9 +1416,10 @@ KOKKOS_INLINE_FUNCTION
 void PairDispersionD3Kokkos<DeviceType>::operator()(
   TagPairDispDD3dEdIJOriginalBJDampKernel<NEIGHFLAG,NEWTON_PAIR,EVFLAG>, const int &ii, EV_FLOAT &ev) const
 {
+  /*
   #if defined(D3K_DEBUG_BALANCE)
    F_FLOAT sumJx = 0, sumJy = 0, sumJz = 0;
-  #endif
+  #endif*/
 
   F_FLOAT fix = 0.0, fiy = 0.0, fiz = 0.0;
 
@@ -1399,10 +1437,11 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
 
   const int itype = d_type(i);
   if (itype <= 0 || itype >= d_mxci_v.extent(0)) return;
+  /*
   if (ii < 10) {  
     Kokkos::printf("KOKKOS BJ: Processing ii=%d i=%d itype=%d (nlocal=%d)\n", 
                    ii, i, itype, nlocal);
-  }
+  }*/
 
   const double xi = d_x(i,0);
   const double yi = d_x(i,1);
@@ -1421,11 +1460,10 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double  dy  = yi - d_x(j,1);
     const double  dz  = zi - d_x(j,2);
     const double  rsq = dx*dx + dy*dy + dz*dz;
-    if (ii < 3 && jj < 10) {
-      Kokkos::printf("  KOKKOS [CUTOFF] i=%d j=%d rsq=%.6f cutsq=%.6f (pass=%s)\n", 
-                     i, j, (double)rsq, (double)d_cutsq_v(itype,jtype), 
-                     (rsq < d_cutsq_v(itype,jtype)) ? "YES" : "NO");
-    }
+    /*if (ii < 3 && jj < 5) {
+      Kokkos::printf("KOKKOS: i=%d j=%d jfull=%d factor=%.6f rsq=%.6f cutsq=%.6f\n", 
+                     i, j, jfull, factor_lj, rsq, (double)d_cutsq_v(itype,jtype));
+    }*/
 
     if (rsq >= d_cutsq_v(itype,jtype)) continue;
 
@@ -1444,6 +1482,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double   r8     = rsq*rsq*rsq*rsq;
 
     // ip - inner product 
+    /*
     if (ii < 3 && jj < 5) {  // Remove comm->me and update->ntimestep checks
       Kokkos::printf("  KOKKOS [BJ] i=%d j=%d r=%.6f C6=%.6e C8=%.6e r0_calc=%.6f\n", 
                      i, j, (double)r, C6, (double)C8, (double)r0);
@@ -1453,7 +1492,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
       const F_FLOAT iptmp = ((a1*r0)+a2);
       Kokkos::printf("  KOKKOS [BJ] a1=%.6f a2=%.6f iptmp=%.6f expt6=%.6e\n", 
                      a1, a2, (double)iptmp, (double)(iptmp*iptmp*iptmp*iptmp*iptmp*iptmp));
-    }
+    }*/
     const double   iptmp  = ((a1*r0)+a2);
     const double   expt6  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
     const double   expt8  = iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp*iptmp;
@@ -1472,9 +1511,10 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     const double  fx = dx * fpair;
     const double  fy = dy * fpair;
     const double  fz = dz * fpair;
+    /*
     #if defined(D3K_DEBUG_BALANCE)
     sumJx += fx; sumJy += fy; sumJz += fz;
-    #endif
+    #endif */
 
     fix += fx; fiy += fy; fiz += fz;
     if (NEWTON_PAIR || j < nlocal) {
@@ -1491,6 +1531,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     }
 
   }
+  /*
   #if defined(D3K_DEBUG_BALANCE) && !defined(KOKKOS_ENABLE_CUDA)
   const double mx = fabs((double)fix - (double)sumJx);
   const double my = fabs((double)fiy - (double)sumJy);
@@ -1499,7 +1540,7 @@ void PairDispersionD3Kokkos<DeviceType>::operator()(
     printf("BJ DAMPING [BAL] step=%lld i=%d mx=%.3e my=%.3e mz=%.3e jnum=%d\n",
            (long long)update->ntimestep, i, mx, my, mz, d_numneigh(i));
   }
-  #endif
+  #endif*/
 
   a_f_scv(i, 0) += fix;
   a_f_scv(i, 1) += fiy;
